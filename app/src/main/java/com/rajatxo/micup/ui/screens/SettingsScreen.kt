@@ -13,13 +13,18 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
@@ -29,15 +34,24 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.rajatxo.micup.R
+import com.rajatxo.micup.data.MicUpPrefs
 import com.rajatxo.micup.ui.components.GlassCard
 import com.rajatxo.micup.ui.theme.Coral
 import com.rajatxo.micup.ui.theme.GlassStroke
@@ -48,6 +62,9 @@ import com.rajatxo.micup.ui.theme.TextSecondary
 @Composable
 fun SettingsScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
+    val prefs = remember { MicUpPrefs(ctx) }
+    var signalingUrl by remember { mutableStateOf(prefs.signalingUrl) }
+    var displayName by remember { mutableStateOf(prefs.displayName) }
 
     Column(
         modifier = Modifier
@@ -55,6 +72,8 @@ fun SettingsScreen(onBack: () -> Unit) {
             .background(Color.Black)
             .statusBarsPadding()
             .navigationBarsPadding()
+            .imePadding()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp)
     ) {
         // Top bar
@@ -139,6 +158,103 @@ fun SettingsScreen(onBack: () -> Unit) {
                         ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ctx.getString(R.string.support_group))))
                     }
                 )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // Signaling server config — required for voice rooms to actually connect.
+        GlassCard(
+            modifier = Modifier.fillMaxWidth(),
+            cornerRadius = 24
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Text(
+                    text = "Signaling Server",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = TextPrimary
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "WebSocket URL of your Cloudflare Worker. " +
+                        "Deploy the worker.js from the repo, then paste the URL here.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary
+                )
+                Spacer(Modifier.height(14.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0x14FFFFFF))
+                        .border(1.dp, GlassStroke, RoundedCornerShape(14.dp))
+                        .padding(horizontal = 14.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    if (signalingUrl.isEmpty()) {
+                        Text(
+                            text = "wss://your-worker.workers.dev",
+                            color = TextSecondary.copy(alpha = 0.4f),
+                            style = TextStyle(fontSize = 14.sp)
+                        )
+                    }
+                    BasicTextField(
+                        value = signalingUrl,
+                        onValueChange = {
+                            signalingUrl = it
+                            prefs.signalingUrl = it
+                        },
+                        singleLine = true,
+                        cursorBrush = SolidColor(Coral),
+                        textStyle = TextStyle(
+                            fontSize = 14.sp,
+                            color = TextPrimary,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        ),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    text = "Display name (shown to squad)",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = TextSecondary
+                )
+                Spacer(Modifier.height(8.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0x14FFFFFF))
+                        .border(1.dp, GlassStroke, RoundedCornerShape(14.dp))
+                        .padding(horizontal = 14.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    if (displayName.isEmpty()) {
+                        Text(
+                            text = "Player",
+                            color = TextSecondary.copy(alpha = 0.4f),
+                            style = TextStyle(fontSize = 14.sp)
+                        )
+                    }
+                    BasicTextField(
+                        value = displayName,
+                        onValueChange = {
+                            displayName = it
+                            prefs.displayName = it
+                        },
+                        singleLine = true,
+                        cursorBrush = SolidColor(Coral),
+                        textStyle = TextStyle(
+                            fontSize = 14.sp,
+                            color = TextPrimary
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         }
 

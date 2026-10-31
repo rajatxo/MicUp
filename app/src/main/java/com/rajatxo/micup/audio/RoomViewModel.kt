@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.rajatxo.micup.data.MicUpPrefs
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,7 +25,9 @@ import kotlinx.coroutines.launch
  */
 class RoomViewModel(app: Application) : AndroidViewModel(app) {
 
-    private val client = RoomClient(app.applicationContext)
+    private val client = RoomClient(app.applicationContext).apply {
+        setLocalName(MicUpPrefs(app.applicationContext).displayName)
+    }
     private val _participants = MutableStateFlow<List<Participant>>(emptyList())
     private val _isMuted = MutableStateFlow(false)
     private val _navigated = MutableStateFlow(false)

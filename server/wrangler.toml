@@ -1,0 +1,21 @@
+name = "micup-signal"
+main = "worker.js"
+compatibility_date = "2024-10-01"
+
+# Free tier limits (no payment required):
+#   - 100,000 requests/day
+#   - 10ms CPU per request
+#   - WebSocket connections: unlimited
+#
+# Deploy:
+#   1. npm install (one time, gets wrangler)
+#   2. npx wrangler login (opens browser, login with Cloudflare account — free)
+#   3. npm run deploy
+#
+# Output will be a URL like:
+#   wss://micup-signal.<your-subdomain>.workers.dev
+#
+# Or use the Cloudflare dashboard (no CLI):
+#   1. https://dash.cloudflare.com → Workers & Pages → Create
+#   2. Paste the contents of server/worker.js
+#   3. Click Deploy

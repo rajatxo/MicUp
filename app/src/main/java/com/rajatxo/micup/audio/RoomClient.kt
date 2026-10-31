@@ -2,6 +2,7 @@ package com.rajatxo.micup.audio
 
 import android.content.Context
 import android.util.Log
+import com.rajatxo.micup.data.MicUpPrefs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -38,13 +39,10 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class RoomClient(
     private val context: Context,
-    private val signalingUrl: String = DEFAULT_SIGNALING_URL
+    private val signalingUrl: String = MicUpPrefs(context).signalingUrl
 ) {
     companion object {
         private const val TAG = "MicUp/RoomClient"
-        // Default broker — a public, free WebSocket relay that we use as a
-        // signaling "message board". Replaceable from Settings.
-        const val DEFAULT_SIGNALING_URL = "wss://relay.micup.app/signal"
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
