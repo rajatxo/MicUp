@@ -22,8 +22,8 @@ android {
         applicationId = "com.rajatxo.micup"
         minSdk = 24
         targetSdk = 35
-        versionCode = 10004
-        versionName = "1.0.4"
+        versionCode = 10005
+        versionName = "1.0.5"
         vectorDrawables { useSupportLibrary = true }
     }
 
