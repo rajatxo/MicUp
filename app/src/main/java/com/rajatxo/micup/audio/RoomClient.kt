@@ -2,8 +2,8 @@ package com.rajatxo.micup.audio
 
 import android.content.Context
 import android.util.Log
-import io.agora.rtc.Constants
-import io.agora.rtc.IRtcEngineEventHandler
+import io.agora.rtc2.Constants
+import io.agora.rtc2.IRtcEngineEventHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob

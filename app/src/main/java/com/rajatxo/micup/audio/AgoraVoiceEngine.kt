@@ -2,9 +2,10 @@ package com.rajatxo.micup.audio
 
 import android.content.Context
 import android.util.Log
-import io.agora.rtc.RtcEngine
-import io.agora.rtc.Constants
-import io.agora.rtc.IRtcEngineEventHandler
+import io.agora.rtc2.Constants
+import io.agora.rtc2.IRtcEngineEventHandler
+import io.agora.rtc2.RtcEngine
+import io.agora.rtc2.RtcEngineConfig
 
 /**
  * Agora voice engine — replaces our broken WebRTC stack entirely.
@@ -58,12 +59,13 @@ class AgoraVoiceEngine private constructor(private val context: Context) {
     fun init(handler: IRtcEngineEventHandler): RtcEngine? {
         if (rtcEngine != null) return rtcEngine
         return try {
-            // Create the engine with Rajat's App ID + the event handler.
-            rtcEngine = RtcEngine.create(
-                context,
-                com.rajatxo.micup.BuildConfig.AGORA_APP_ID,
-                handler
-            )
+            // Create the engine config with Rajat's App ID + the event handler.
+            val config = RtcEngineConfig().apply {
+                mContext = context
+                mAppId = com.rajatxo.micup.BuildConfig.AGORA_APP_ID
+                mEventHandler = handler
+            }
+            rtcEngine = RtcEngine.create(config)
 
             // THE MAGIC — set high-quality audio + game streaming scenario.
             // This is what makes voice sound like Telegram AND not duck game audio.
@@ -73,20 +75,17 @@ class AgoraVoiceEngine private constructor(private val context: Context) {
             )
 
             // Enable AI noise suppression — Agora's built-in DNN-based NS.
-            // Removes background noise (fans, traffic, keyboard clicks) while
-            // preserving voice clarity. Better than WebRTC's NS.
             rtcEngine?.setParameters("{\"che.audio.ains_mode\":true}")
             rtcEngine?.setParameters("{\"che.audio.nsng.lowerBound\":10}")
             rtcEngine?.setParameters("{\"che.audio.nsng.upperBound\":30}")
 
-            // Enable software AEC (echo cancellation) — Agora's tuned AEC3.
+            // Enable AI echo cancellation.
             rtcEngine?.setParameters("{\"che.audio.enable_ai_echo_cancellation\":true}")
 
-            // Auto gain control — keeps voice loudness consistent regardless
-            // of mic distance or speaking volume.
+            // Auto gain control.
             rtcEngine?.setParameters("{\"che.audio.enable_agc\":true}")
 
-            // Stereo output for directional clarity.
+            // Enable audio module.
             rtcEngine?.enableAudio()
 
             Log.i(TAG, "Agora RtcEngine ready — MUSIC_HIGH_QUALITY + GAME_STREAMING")
@@ -109,7 +108,7 @@ class AgoraVoiceEngine private constructor(private val context: Context) {
             Log.e(TAG, "joinChannel called before init()")
             return -1
         }
-        // Token = null (App ID only auth). OptionalInfo = null. uid = 0 (auto).
+        // Token = null (App ID only auth). uid = 0 (auto-assigned).
         return engine.joinChannel(null, channelName, "", uid)
     }
 
