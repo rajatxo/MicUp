@@ -33,9 +33,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -83,7 +87,7 @@ fun RoomScreen(
 
     // Guard against multiple rapid Leave taps. Once true, all subsequent
     // taps are ignored. Fixes the "7-8 taps to leave" issue.
-    var hasLeft by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var hasLeft by remember { mutableStateOf(false) }
 
     // Start the foreground service the moment we enter the room.
     LaunchedEffect(roomCode) {
@@ -94,7 +98,7 @@ fun RoomScreen(
     // the foreground service and release resources. This guarantees the
     // mic is released even if the Leave button wasn't tapped (e.g., user
     // pressed the system back button).
-    androidx.compose.runtime.DisposableEffect(roomCode) {
+    DisposableEffect(roomCode) {
         onDispose {
             try { VoiceService.stop(ctx) } catch (_: Throwable) {}
             vm.leave()
