@@ -73,15 +73,19 @@ android {
         }
     }
 
-    // Per-architecture APKs — each one is smaller (no native libs for other
-    // ABIs) and avoids any "ABI mismatch" install failures on weird devices.
-    // A universal APK is also generated as a fallback.
-    splits {
-        abi {
-            isEnable = true
-            reset()
-            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
-            isUniversalApk = true
+    // Per-architecture APKs — only enabled when explicitly requested
+    // via -PabiSplits=true. Disabled by default for GitHub Releases
+    // (we publish one universal APK for simplicity — friends don't
+    // want to pick which APK to download).
+    val enableAbiSplits = (project.findProperty("abiSplits") as? String)?.toBoolean() ?: false
+    if (enableAbiSplits) {
+        splits {
+            abi {
+                isEnable = true
+                reset()
+                include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+                isUniversalApk = true
+            }
         }
     }
 
