@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -87,6 +88,31 @@ fun HomeScreen(
     var code by rememberSaveable { mutableStateOf("") }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
 
+    // Mic permission state — required to actually capture audio (and show
+    // the green mic dot in the status bar).
+    var hasMicPermission by remember {
+        mutableStateOf(
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                ctx, android.Manifest.permission.RECORD_AUDIO
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val micPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasMicPermission = granted
+        if (!granted) {
+            error = "Microphone permission is required for voice chat"
+        }
+    }
+
+    // Request mic permission on first launch.
+    LaunchedEffect(Unit) {
+        if (!hasMicPermission) {
+            micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
     // When we successfully join, navigate to the room screen.
     LaunchedEffect(state) {
         val s = state
@@ -96,6 +122,9 @@ fun HomeScreen(
         }
         if (s is RoomState.Failed) error = s.message
     }
+
+    // Connecting overlay — shows a spinner when state is Connecting.
+    val isConnecting = state is RoomState.Connecting
 
     Box(
         modifier = Modifier
@@ -296,6 +325,34 @@ fun HomeScreen(
                     style = MaterialTheme.typography.labelMedium,
                     color = TextSecondary
                 )
+            }
+        }
+
+        // Connecting overlay — shows a coral spinner on top of everything
+        // while we're connecting to the signaling server. Gives instant
+        // feedback that the tap was registered, no delay felt.
+        if (isConnecting) {
+            val connectingState = state as RoomState.Connecting
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.85f))
+                    .clickable(enabled = false) {},
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        color = Coral,
+                        strokeWidth = 3.dp,
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        text = if (connectingState.isHost) "Creating room..." else "Joining room...",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextSecondary
+                    )
+                }
             }
         }
     }

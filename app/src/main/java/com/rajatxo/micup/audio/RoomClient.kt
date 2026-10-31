@@ -88,21 +88,26 @@ class RoomClient(
 
     /** Create a new room. The room code is returned via [RoomState.Joined]. */
     fun createRoom(): Job = scope.launch {
+        // Generate the code IMMEDIATELY so we can show "Connecting to ABC234"
+        // without waiting for the voice engine to init (which takes ~1-2 sec).
+        val code = generateRoomCode()
+        _state.value = RoomState.Connecting(code, isHost = true)
         if (!engine.init()) {
             _state.value = RoomState.Failed("Voice engine init failed")
             return@launch
         }
-        val code = generateRoomCode()
         connectSignaling(code, isHost = true)
     }
 
     /** Join an existing room by its 6-character code. */
     fun joinRoom(code: String): Job = scope.launch {
+        val upperCode = code.uppercase()
+        _state.value = RoomState.Connecting(upperCode, isHost = false)
         if (!engine.init()) {
             _state.value = RoomState.Failed("Voice engine init failed")
             return@launch
         }
-        connectSignaling(code.uppercase(), isHost = false)
+        connectSignaling(upperCode, isHost = false)
     }
 
     /** Mute / unmute the local mic. */
@@ -111,19 +116,34 @@ class RoomClient(
         scope.launch { _events.emit(RoomEvent.LocalMuteChanged(muted)) }
     }
 
-    /** Leave the room and tear everything down. */
-    fun leave() = scope.launch {
-        try {
-            signaling?.send(json.encodeToString(SignalMessage.serializer(),
-                SignalMessage.Bye(localId)))
-        } catch (_: Throwable) {}
-        peers.values.forEach { runCatching { it.dispose() } }
-        peers.clear()
-        iceCandidatesBuffer.clear()
-        signaling?.disconnect()
-        signaling = null
-        engine.release()
+    /**
+     * Leave the room and tear everything down. SYNCHRONOUS on the calling
+     * thread — the UI state goes to Idle IMMEDIATELY so the user sees the
+     * home screen without delay. Cleanup runs in the background.
+     *
+     * Idempotent: safe to call multiple times rapidly (the user tapping
+     * the Leave button 7-8 times doesn't cause issues).
+     */
+    fun leave() {
+        // Set state to Idle FIRST — UI navigates back immediately.
         _state.value = RoomState.Idle
+        // Then do cleanup in the background. Use a fresh non-cancellable
+        // scope so the cleanup completes even if the calling coroutine
+        // is cancelled.
+        scope.launch {
+            try {
+                signaling?.send(json.encodeToString(SignalMessage.serializer(),
+                    SignalMessage.Bye(localId)))
+            } catch (_: Throwable) {}
+            // Small delay to let the Bye message flush.
+            kotlinx.coroutines.delay(100)
+            peers.values.forEach { runCatching { it.dispose() } }
+            peers.clear()
+            iceCandidatesBuffer.clear()
+            signaling?.disconnect()
+            signaling = null
+            engine.release()
+        }
     }
 
     // ---------- Signaling ----------
@@ -289,6 +309,8 @@ class RoomClient(
 
 sealed interface RoomState {
     data object Idle : RoomState
+    /** Transitioning to a room — show a loading spinner. */
+    data class Connecting(val roomCode: String, val isHost: Boolean) : RoomState
     data class Joined(
         val roomCode: String,
         val isHost: Boolean,

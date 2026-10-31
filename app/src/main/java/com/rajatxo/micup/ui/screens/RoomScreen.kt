@@ -81,9 +81,24 @@ fun RoomScreen(
     val participants by vm.participants.collectAsState()
     val isMuted by vm.isMuted.collectAsState()
 
+    // Guard against multiple rapid Leave taps. Once true, all subsequent
+    // taps are ignored. Fixes the "7-8 taps to leave" issue.
+    var hasLeft by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+
     // Start the foreground service the moment we enter the room.
     LaunchedEffect(roomCode) {
         VoiceService.start(ctx, roomCode)
+    }
+
+    // When the screen is disposed (user navigates away OR leaves), stop
+    // the foreground service and release resources. This guarantees the
+    // mic is released even if the Leave button wasn't tapped (e.g., user
+    // pressed the system back button).
+    androidx.compose.runtime.DisposableEffect(roomCode) {
+        onDispose {
+            try { VoiceService.stop(ctx) } catch (_: Throwable) {}
+            vm.leave()
+        }
     }
 
     Box(
@@ -275,8 +290,18 @@ fun RoomScreen(
                             .background(Color(0x22FF5252))
                             .border(1.dp, Muted, CircleShape)
                             .clickable {
-                                vm.leave()
+                                // Guard against multiple rapid taps — only the first
+                                // tap actually triggers leave. Subsequent taps are
+                                // ignored. This fixes the "7-8 taps to leave" issue.
+                                if (hasLeft) return@clickable
+                                hasLeft = true
+                                // Stop the foreground service FIRST so the mic green
+                                // dot disappears immediately + Android releases the mic.
                                 VoiceService.stop(ctx)
+                                // Then tell the ViewModel to leave (cleanup runs in
+                                // the background, doesn't block the UI).
+                                vm.leave()
+                                // Finally navigate back to home.
                                 onLeave()
                             },
                         contentAlignment = Alignment.Center
