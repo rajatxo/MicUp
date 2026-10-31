@@ -68,6 +68,22 @@ class RoomClient(
 
     fun setLocalName(name: String) { localName = name }
 
+    /** Read the display name fresh from prefs (so Settings changes are picked up). */
+    private fun freshLocalName(): String = MicUpPrefs(context).displayName
+
+    /**
+     * Read the signaling URL FRESH from prefs on every connect attempt.
+     *
+     * Previously this was read once at RoomClient construction time,
+     * which meant if the user updated the URL in Settings after the
+     * HomeScreen loaded (and thus after the RoomViewModel was created),
+     * the cached default URL was used instead of the new one. That's
+     * why "Create Room" was hitting relay.micup.app even after the user
+     * pasted their own URL in Settings.
+     */
+    private fun freshSignalingUrl(): String =
+        MicUpPrefs(context).signalingUrl.trim().trimEnd('/', '?', '&')
+
     // ---------- Public API ----------
 
     /** Create a new room. The room code is returned via [RoomState.Joined]. */
@@ -113,15 +129,13 @@ class RoomClient(
     // ---------- Signaling ----------
 
     /**
-     * Build the WebSocket URL. Normalizes the signaling URL:
+     * Build the WebSocket URL. Reads the signaling URL FRESH from prefs
+     * (so changes in Settings are picked up) and normalizes it:
      *  - strips trailing slashes (so we don't end up with //?room=...)
      *  - strips trailing ? and & (in case the URL already had query params)
      */
     private fun buildWebSocketUrl(roomCode: String): String {
-        var base = signalingUrl.trim()
-        while (base.endsWith('/') || base.endsWith('?') || base.endsWith('&')) {
-            base = base.dropLast(1)
-        }
+        val base = freshSignalingUrl()
         return "$base?room=$roomCode&peer=$localId"
     }
 
@@ -137,9 +151,10 @@ class RoomClient(
                     localId = localId,
                     participants = listOf(localId)
                 )
-                // Announce ourselves to the room.
+                // Announce ourselves to the room with the freshest name from prefs.
+                val name = freshLocalName()
                 signaling?.send(json.encodeToString(SignalMessage.serializer(),
-                    SignalMessage.Hello(localId, localName, isHost)))
+                    SignalMessage.Hello(localId, name, isHost)))
             },
             onMessage = ::handleSignal,
             onClose = { _state.value = RoomState.Idle },
