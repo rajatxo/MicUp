@@ -24,8 +24,8 @@ android {
         // devices. We don't go lower because Compose needs API 21+.
         minSdk = 21
         targetSdk = 35
-        versionCode = 10013
-        versionName = "1.0.13"
+        versionCode = 10014
+        versionName = "1.0.14"
         vectorDrawables { useSupportLibrary = true }
     }
 
