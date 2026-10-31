@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MicUp splash icon — a coral microphone glyph on transparent.
+     Drawn as a vector so it scales crisply on every density. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Mic body -->
+    <path
+        android:fillColor="#FF6B6B"
+        android:pathData="M54,28 m-12,0 a12,12 0 1,0 24,0 a12,12 0 1,0 -24,0 M42,28 L42,52 a12,12 0 0,0 24,0 L66,28 M54,64 L54,76 M44,76 L64,76"
+        android:strokeColor="#FF6B6B"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

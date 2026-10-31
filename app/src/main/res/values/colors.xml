@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Coral X palette: pure black for AMOLED, coral red accent. -->
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="coral">#FFFF6B6B</color>
+    <color name="gold">#FFF4B400</color>
+    <color name="surface_glass">#1AFFFFFF</color>
+</resources>
