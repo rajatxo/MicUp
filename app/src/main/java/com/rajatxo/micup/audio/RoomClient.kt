@@ -112,9 +112,24 @@ class RoomClient(
 
     // ---------- Signaling ----------
 
+    /**
+     * Build the WebSocket URL. Normalizes the signaling URL:
+     *  - strips trailing slashes (so we don't end up with //?room=...)
+     *  - strips trailing ? and & (in case the URL already had query params)
+     */
+    private fun buildWebSocketUrl(roomCode: String): String {
+        var base = signalingUrl.trim()
+        while (base.endsWith('/') || base.endsWith('?') || base.endsWith('&')) {
+            base = base.dropLast(1)
+        }
+        return "$base?room=$roomCode&peer=$localId"
+    }
+
     private fun connectSignaling(roomCode: String, isHost: Boolean) {
+        val finalUrl = buildWebSocketUrl(roomCode)
+        Log.i(TAG, "Connecting to signaling: $finalUrl")
         signaling = SignalingClient(
-            url = "$signalingUrl?room=$roomCode&peer=$localId",
+            url = finalUrl,
             onOpen = {
                 _state.value = RoomState.Joined(
                     roomCode = roomCode,
@@ -128,7 +143,10 @@ class RoomClient(
             },
             onMessage = ::handleSignal,
             onClose = { _state.value = RoomState.Idle },
-            onError = { _state.value = RoomState.Failed(it) }
+            onError = { err ->
+                // Surface the URL in the error so we can debug 404s.
+                _state.value = RoomState.Failed("$err\n\nURL: $finalUrl")
+            }
         ).also { it.connect() }
     }
 

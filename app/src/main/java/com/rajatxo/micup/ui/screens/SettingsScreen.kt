@@ -119,7 +119,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "Version 1.0.0",
+                    text = "Version ${getAppVersion(ctx)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary
                 )
@@ -353,4 +353,14 @@ private fun Divider() {
             .height(1.dp)
             .background(GlassStroke.copy(alpha = 0.5f))
     )
+}
+
+/** Reads the actual app version from PackageInfo — never hardcode. */
+private fun getAppVersion(context: android.content.Context): String {
+    return try {
+        val pi = context.packageManager.getPackageInfo(context.packageName, 0)
+        "${pi.versionName} (${pi.longVersionCode})"
+    } catch (_: Throwable) {
+        "unknown"
+    }
 }
