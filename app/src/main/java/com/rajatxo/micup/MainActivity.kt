@@ -5,11 +5,7 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
-import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.rajatxo.micup.ui.MicUpScaffold
@@ -25,12 +21,14 @@ import com.rajatxo.micup.ui.theme.MicUpTheme
  *           don't fight the system back-gesture.
  *  - Law 9: Status bar icon appearance flips per app theme (light icons on dark theme).
  *  - Law 10: BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE so immersive mode never steals gestures.
+ *
+ * Splash is provided by Theme.App's windowBackground = @drawable/splash_background.
+ * No AndroidX core-splashscreen needed — sideloaded apps don't need the
+ * Android 12+ animated icon API.
  */
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Splash must install before super.onCreate.
-        installSplashScreen()
         super.onCreate(savedInstanceState)
 
         // Law 2: manual edge-to-edge. NOT enableEdgeToEdge().
@@ -42,8 +40,7 @@ class MainActivity : ComponentActivity() {
         setSystemGestureExclusion()
 
         setContent {
-            // MicUp is always dark (pure black AMOLED) — but we still respect the system
-            // value to flip status bar icon appearance correctly.
+            // MicUp is always dark (pure black AMOLED).
             val dark = true
             MicUpTheme(darkTheme = dark) {
                 SideEffect {

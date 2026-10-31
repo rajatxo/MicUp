@@ -18,11 +18,4 @@
         <item name="android:enforceNavigationBarContrast" tools:targetApi="29">false</item>
     </style>
 
-    <!-- Splash screen theme — uses AndroidX Core Splashscreen. -->
-    <style name="Theme.App.Splash" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenBackground">@android:color/black</item>
-        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_icon</item>
-        <item name="postSplashScreenTheme">@style/Theme.App</item>
-    </style>
-
 </resources>
