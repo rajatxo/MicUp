@@ -24,6 +24,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CallEnd
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -148,7 +153,7 @@ fun RoomScreen(
                         )
                         Spacer(Modifier.width(10.dp))
                         Icon(
-                            imageVector = androidx.compose.material.icons.Icons.Filled.ContentCopy,
+                            imageVector = Icons.Filled.ContentCopy,
                             contentDescription = "Copy",
                             tint = TextSecondary,
                             modifier = Modifier.size(20.dp)
@@ -245,9 +250,9 @@ fun RoomScreen(
                     ) {
                         Icon(
                             imageVector = if (isMuted)
-                                androidx.compose.material.icons.Icons.Filled.MicOff
+                                Icons.Filled.MicOff
                             else
-                                androidx.compose.material.icons.Icons.Filled.Mic,
+                                Icons.Filled.Mic,
                             contentDescription = if (isMuted) "Unmute" else "Mute",
                             tint = if (isMuted) Muted else Color.Black,
                             modifier = Modifier.size(32.dp)
@@ -277,7 +282,7 @@ fun RoomScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = androidx.compose.material.icons.Icons.Filled.CallEnd,
+                            imageVector = Icons.Filled.CallEnd,
                             contentDescription = "Leave",
                             tint = Muted,
                             modifier = Modifier.size(28.dp)
@@ -359,9 +364,9 @@ private fun ParticipantCell(
             // Mic icon on the right
             Icon(
                 imageVector = if (isMuted)
-                    androidx.compose.material.icons.Icons.Filled.MicOff
+                    Icons.Filled.MicOff
                 else
-                    androidx.compose.material.icons.Icons.Filled.Mic,
+                    Icons.Filled.Mic,
                 contentDescription = null,
                 tint = if (isMuted) Muted else TextSecondary,
                 modifier = Modifier.size(20.dp)

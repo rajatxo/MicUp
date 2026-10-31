@@ -22,6 +22,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -77,7 +79,7 @@ fun HomeScreen(
     onNavigateToSettings: () -> Unit
 ) {
     val ctx = LocalContext.current
-    val vm: RoomViewModel = viewModel(factory = RoomViewModelFactory(ctx))
+    val vm: RoomViewModel = viewModel(factory = RoomViewModelFactory(ctx.applicationContext as android.app.Application))
     val state by vm.state.collectAsState()
     val scope = rememberCoroutineScope()
 
@@ -136,7 +138,7 @@ fun HomeScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = androidx.compose.material.icons.Icons.Filled.Settings,
+                        imageVector = Icons.Filled.Settings,
                         contentDescription = "Settings",
                         tint = TextPrimary
                     )

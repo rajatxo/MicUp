@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import org.webrtc.AddIceObserver
 import org.webrtc.DataChannel
 import org.webrtc.IceCandidate
 import org.webrtc.MediaStream
@@ -192,7 +193,7 @@ class RoomClient(
         val pc = peers[fromPeer] ?: return
         pc.setRemoteDescription(SimpleSdpObserver(), SessionDescription(SessionDescription.Type.ANSWER, sdp))
         // Flush any buffered ICE candidates.
-        iceCandidatesBuffer.remove(fromPeer)?.forEach { pc.addIceCandidate(it, SimpleSdpObserver()) }
+        iceCandidatesBuffer.remove(fromPeer)?.forEach { pc.addIceCandidate(it, SimpleIceObserver()) }
     }
 
     private fun receiveIce(fromPeer: String, candidate: IceCandidateJson) {
@@ -202,7 +203,7 @@ class RoomClient(
             // Buffer until remote SDP is set.
             iceCandidatesBuffer.getOrPut(fromPeer) { mutableListOf() }.add(ice)
         } else {
-            pc.addIceCandidate(ice, SimpleSdpObserver())
+            pc.addIceCandidate(ice, SimpleIceObserver())
         }
     }
 
@@ -303,4 +304,10 @@ class SimpleSdpObserver : SdpObserver {
     override fun onSetSuccess() {}
     override fun onCreateFailure(p0: String?) {}
     override fun onSetFailure(p0: String?) {}
+}
+
+/** No-op AddIceObserver — we don't need to react when ICE candidates land. */
+class SimpleIceObserver : AddIceObserver {
+    override fun onAddSuccess() {}
+    override fun onAddFailure(error: String?) {}
 }

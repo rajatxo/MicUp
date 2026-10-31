@@ -1,5 +1,6 @@
 package com.rajatxo.micup.ui
 
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowInsetsCompat
@@ -20,13 +21,17 @@ val LocalPlayerAwareWindowInsets = staticCompositionLocalOf<WindowInsetsCompat> 
 }
 
 /** Convert a [WindowInsetsCompat] to a Compose PaddingValues. */
-fun WindowInsetsCompat.toPaddingValues(): androidx.compose.foundation.layout.PaddingValues {
-    val (l, t, r, b) = this.getInsets(
+fun WindowInsetsCompat.toPaddingValues(): PaddingValues {
+    val insets = this.getInsets(
         WindowInsetsCompat.Type.systemBars() or
             WindowInsetsCompat.Type.displayCutout() or
             WindowInsetsCompat.Type.ime()
     )
-    return androidx.compose.foundation.layout.PaddingValues(
-        start = l.dp, top = t.dp, end = r.dp, bottom = b.dp
+    return PaddingValues(
+        start = insets.left.dp,
+        top = insets.top.dp,
+        end = insets.right.dp,
+        bottom = insets.bottom.dp
     )
 }
+

@@ -38,8 +38,13 @@ class RoomViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             client.events.collect { ev ->
                 when (ev) {
-                    is RoomEvent.PeerJoined -> _participants.update { it + Participant(ev.id, ev.name, talking = false, connected = false) }
-                    is RoomEvent.PeerLeft, is RoomEvent.PeerDisconnected -> _participants.update { list ->
+                    is RoomEvent.PeerJoined -> _participants.update {
+                        it + Participant(ev.id, ev.name, talking = false, connected = false)
+                    }
+                    is RoomEvent.PeerLeft -> _participants.update { list ->
+                        list.filterNot { it.id == ev.id }
+                    }
+                    is RoomEvent.PeerDisconnected -> _participants.update { list ->
                         list.filterNot { it.id == ev.id }
                     }
                     is RoomEvent.PeerConnected -> _participants.update { list ->

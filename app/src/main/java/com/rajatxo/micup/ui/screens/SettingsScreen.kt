@@ -20,6 +20,11 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -68,7 +73,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = androidx.compose.material.icons.Icons.Filled.ArrowBack,
+                    imageVector = Icons.Filled.ArrowBack,
                     contentDescription = "Back",
                     tint = TextPrimary
                 )
@@ -120,7 +125,7 @@ fun SettingsScreen(onBack: () -> Unit) {
         ) {
             Column {
                 LinkRow(
-                    icon = androidx.compose.material.icons.Icons.Filled.Person,
+                    icon = Icons.Filled.Person,
                     label = "Developer — @rajat_xo",
                     onClick = {
                         ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ctx.getString(R.string.developer_telegram))))
@@ -128,7 +133,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
                 Divider()
                 LinkRow(
-                    icon = androidx.compose.material.icons.Icons.Filled.Group,
+                    icon = Icons.Filled.Group,
                     label = "Support Group",
                     onClick = {
                         ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ctx.getString(R.string.support_group))))
@@ -217,7 +222,7 @@ private fun LinkRow(
         )
         Spacer(Modifier.weight(1f))
         Icon(
-            imageVector = androidx.compose.material.icons.Icons.Filled.ChevronRight,
+            imageVector = Icons.Filled.ChevronRight,
             contentDescription = null,
             tint = TextSecondary
         )
