@@ -7,7 +7,7 @@ import org.webrtc.AudioTrack
 import org.webrtc.MediaConstraints
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
-import org.webrtc.audio.JavaAudioDeviceModule
+import org.webrtc.audio.AudioDeviceModule
 
 /**
  * Owns the WebRTC PeerConnectionFactory and the local audio track.
@@ -24,7 +24,7 @@ import org.webrtc.audio.JavaAudioDeviceModule
 class VoiceEngine(private val context: Context) {
 
     private var factory: PeerConnectionFactory? = null
-    private var audioDeviceModule: JavaAudioDeviceModule? = null
+    private var audioDeviceModule: AudioDeviceModule? = null
     private var localAudioSource: AudioSource? = null
     private var localAudioTrack: AudioTrack? = null
 
