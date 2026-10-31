@@ -34,7 +34,12 @@ android {
             if (keystorePropertiesFile.exists()) {
                 keyAlias = keystoreProperties["keyAlias"] as String
                 keyPassword = keystoreProperties["keyPassword"] as String
-                storeFile = file(keystoreProperties["storeFile"] as String)
+                // CRITICAL: use rootProject.file() so the path resolves
+                // relative to the repo root, not the app/ module dir.
+                // Without this, storeFile=micup-release.jks resolves to
+                // app/micup-release.jks and the build fails with
+                // "Keystore file not found".
+                storeFile = rootProject.file(keystoreProperties["storeFile"] as String)
                 storePassword = keystoreProperties["storePassword"] as String
             }
         }
