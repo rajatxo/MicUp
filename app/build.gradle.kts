@@ -42,16 +42,20 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // Temporarily disabled minify + shrinkResources to rule out R8
+            // issues that could cause crashes on some devices. Once the app
+            // is confirmed stable, re-enable with:
+            //   isMinifyEnabled = true
+            //   isShrinkResources = true
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
             // CRITICAL: if no release keystore is configured, fall back to the
             // debug signing config so the APK actually installs. An unsigned
-            // release APK fails with "invalid package" on every phone — that's
-            // the bug we're fixing here.
+            // release APK fails with "invalid package" on every phone.
             signingConfig = if (keystorePropertiesFile.exists()) {
                 signingConfigs.getByName("release")
             } else {

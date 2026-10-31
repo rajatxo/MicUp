@@ -1,11 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Splash background — pure black with the coral MicUp wordmark.
-     Used as windowBackground so the very first frame is already branded. -->
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="@android:color/black" />
-    <item android:gravity="center">
-        <bitmap
-            android:gravity="center"
-            android:src="@drawable/ic_splash_icon" />
-    </item>
-</layer-list>
+<!-- Splash background — solid black. The Compose UI loads instantly and
+     shows the branded home screen, so we don't need a fancy splash.
+     (The previous version used <bitmap android:src="@drawable/ic_splash_icon"/>
+     which can crash on some OEM ROMs when ic_splash_icon is a vector drawable.) -->
+<color xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="@android:color/black" />

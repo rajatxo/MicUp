@@ -1,22 +1,16 @@
 package com.rajatxo.micup.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.SideEffect
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalView
-import androidx.core.view.WindowCompat
 
 private val MicUpDarkColors = darkColorScheme(
     primary = Coral,
-    onPrimary = Color.Black,
+    onPrimary = androidx.compose.ui.graphics.Color.Black,
     primaryContainer = CoralDim,
-    onPrimaryContainer = Color.White,
+    onPrimaryContainer = androidx.compose.ui.graphics.Color.White,
     secondary = Gold,
-    onSecondary = Color.Black,
+    onSecondary = androidx.compose.ui.graphics.Color.Black,
     background = PureBlack,
     onBackground = TextPrimary,
     surface = DarkSurface,
@@ -31,25 +25,19 @@ private val MicUpDarkColors = darkColorScheme(
 /**
  * MicUp theme. Always dark — pure black for AMOLED battery efficiency,
  * per the Coral X design philosophy.
+ *
+ * NOTE: we do NOT touch the window here. All window setup (edge-to-edge,
+ * transparent bars, system bar appearance) is done in MainActivity.
+ * Previously this theme had a SideEffect that cast view.context to Activity,
+ * which can crash on some OEM ROMs where the view context is wrapped.
  */
 @Composable
 fun MicUpTheme(
-    darkTheme: Boolean = true,
+    @Suppress("UNUSED_PARAMETER") darkTheme: Boolean = true,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = MicUpDarkColors
-    val view = LocalView.current
-    if (!view.isInEditMode) {
-        SideEffect {
-            val window = (view.context as android.app.Activity).window
-            WindowCompat.setDecorFitsSystemWindows(window, false)
-            // Transparent system bars so our edge-to-edge UI shows through.
-            window.statusBarColor = Color.Transparent.toArgb()
-            window.navigationBarColor = Color.Transparent.toArgb()
-        }
-    }
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = MicUpDarkColors,
         typography = MicUpTypography,
         content = content
     )
