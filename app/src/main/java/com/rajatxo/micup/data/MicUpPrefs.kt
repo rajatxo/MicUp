@@ -31,10 +31,12 @@ class MicUpPrefs(context: Context) {
         private const val KEY_DISPLAY_NAME = "display_name"
 
         /**
-         * The default signaling URL — points at a non-existent server.
-         * Deploy your own Cloudflare Worker (see server/worker.js +
-         * README.md) and update this in Settings → Signaling Server.
+         * The default signaling URL — Rajat's deployed Cloudflare Worker.
+         *
+         * Friends who install the app don't need to set up their own server.
+         * They just install the APK and it works — this URL is pre-baked in.
+         * Rajat only deploys the worker ONCE, and everyone shares it.
          */
-        const val DEFAULT_SIGNALING_URL = "wss://relay.micup.app/signal"
+        const val DEFAULT_SIGNALING_URL = "wss://micup-signal.chxsexo.workers.dev"
     }
 }
