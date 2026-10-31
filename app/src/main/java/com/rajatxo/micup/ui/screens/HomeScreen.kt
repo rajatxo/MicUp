@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -103,12 +104,23 @@ fun HomeScreen(
         hasMicPermission = granted
         if (!granted) {
             error = "Microphone permission is required for voice chat"
+        } else {
+            error = null
         }
     }
 
     // Request mic permission on first launch.
     LaunchedEffect(Unit) {
         if (!hasMicPermission) {
+            micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    /** Helper: ensure mic permission before doing an action. */
+    fun ensureMicThen(action: () -> Unit) {
+        if (hasMicPermission) {
+            action()
+        } else {
             micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
         }
     }
@@ -197,13 +209,50 @@ fun HomeScreen(
             Spacer(Modifier.height(72.dp))
 
             if (!joinMode) {
+                // Mic permission warning — show if not granted
+                if (!hasMicPermission) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color(0x22FF5252))
+                            .border(1.dp, Muted, RoundedCornerShape(16.dp))
+                            .clickable {
+                                micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                            }
+                            .padding(16.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Filled.MicOff,
+                                contentDescription = null,
+                                tint = Muted,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "Microphone permission needed",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = TextPrimary
+                                )
+                                Text(
+                                    text = "Tap here to grant — required for voice chat",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextSecondary
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                }
                 PrimaryButton(
                     text = "Create Room",
                     accent = true,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     error = null
-                    scope.launch { vm.createRoom() }
+                    ensureMicThen { scope.launch { vm.createRoom() } }
                 }
                 Spacer(Modifier.height(14.dp))
                 PrimaryButton(
@@ -282,7 +331,7 @@ fun HomeScreen(
                             ) {
                                 if (code.length == 6) {
                                     error = null
-                                    scope.launch { vm.joinRoom(code) }
+                                    ensureMicThen { scope.launch { vm.joinRoom(code) } }
                                 } else {
                                     error = "Code must be 6 characters"
                                 }
