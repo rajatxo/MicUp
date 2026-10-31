@@ -20,7 +20,9 @@ android {
 
     defaultConfig {
         applicationId = "com.rajatxo.micup"
-        minSdk = 24
+        // minSdk 21 = Android 5.0 Lollipop. Covers ~99% of active Android
+        // devices. We don't go lower because Compose needs API 21+.
+        minSdk = 21
         targetSdk = 35
         versionCode = 10008
         versionName = "1.0.8"
@@ -46,13 +48,31 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            if (keystorePropertiesFile.exists()) {
-                signingConfig = signingConfigs.getByName("release")
+            // CRITICAL: if no release keystore is configured, fall back to the
+            // debug signing config so the APK actually installs. An unsigned
+            // release APK fails with "invalid package" on every phone — that's
+            // the bug we're fixing here.
+            signingConfig = if (keystorePropertiesFile.exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
             }
         }
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+        }
+    }
+
+    // Per-architecture APKs — each one is smaller (no native libs for other
+    // ABIs) and avoids any "ABI mismatch" install failures on weird devices.
+    // A universal APK is also generated as a fallback.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            isUniversalApk = true
         }
     }
 

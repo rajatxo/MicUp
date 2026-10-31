@@ -76,10 +76,10 @@ jobs:
         git commit -m "chore: auto-bump to v$NEW_NAME" || true
         git push origin main || true
 
-    - name: Build release APK
+    - name: Build release APK (per-ABI + universal)
       run: ./gradlew :app:assembleRelease --no-daemon --max-workers=2
 
-    - name: Build debug APK
+    - name: Build debug APK (universal, always installable)
       run: ./gradlew :app:assembleDebug --no-daemon --max-workers=2
 
     - name: Get version info
@@ -91,25 +91,41 @@ jobs:
         echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
         echo "Version: $VERSION_NAME (code: $VERSION_CODE)"
 
-    - name: Rename release APK
+    - name: List built APKs
+      run: find app/build/outputs/apk -name "*.apk" -exec ls -lh {} \;
+
+    - name: Rename universal release APK
       run: |
         VERSION_NAME=$(grep 'versionName' app/build.gradle.kts | head -1 | sed 's/.*= *"//; s/".*//')
-        APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
-        if [ -n "$APK_PATH" ]; then
-          mv "$APK_PATH" "app/build/outputs/apk/release/MicUp-v${VERSION_NAME}.apk"
-          echo "Renamed to MicUp-v${VERSION_NAME}.apk"
+        UNIVERSAL=$(find app/build/outputs/apk/release -name "*universal*.apk" | head -1)
+        if [ -n "$UNIVERSAL" ]; then
+          mv "$UNIVERSAL" "app/build/outputs/apk/release/MicUp-v${VERSION_NAME}-universal-release.apk"
         fi
 
-    - name: Upload debug APK artifact
+    - name: Upload universal release APK (install on any phone)
+      uses: actions/upload-artifact@v4
+      with:
+        name: micup-universal-release-apk
+        path: app/build/outputs/apk/release/MicUp-*-universal-release.apk
+        retention-days: 30
+
+    - name: Upload arm64-v8a release APK (most modern phones)
+      uses: actions/upload-artifact@v4
+      with:
+        name: micup-arm64-release-apk
+        path: app/build/outputs/apk/release/*arm64-v8a*.apk
+        retention-days: 30
+
+    - name: Upload armeabi-v7a release APK (older 32-bit phones)
+      uses: actions/upload-artifact@v4
+      with:
+        name: micup-armv7-release-apk
+        path: app/build/outputs/apk/release/*armeabi-v7a*.apk
+        retention-days: 30
+
+    - name: Upload debug APK (fallback, always installable)
       uses: actions/upload-artifact@v4
       with:
         name: micup-debug-apk
         path: app/build/outputs/apk/debug/*.apk
         retention-days: 7
-
-    - name: Upload release APK artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: micup-release-apk
-        path: app/build/outputs/apk/release/*.apk
-        retention-days: 30
