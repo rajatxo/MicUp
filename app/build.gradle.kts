@@ -20,13 +20,22 @@ android {
 
     defaultConfig {
         applicationId = "com.rajatxo.micup"
-        // minSdk 21 = Android 5.0 Lollipop. Covers ~99% of active Android
-        // devices. We don't go lower because Compose needs API 21+.
         minSdk = 21
         targetSdk = 35
-        versionCode = 10015
-        versionName = "1.0.15"
+        versionCode = 20000
+        versionName = "2.0.0"
         vectorDrawables { useSupportLibrary = true }
+
+        // Agora App ID — baked into the APK via BuildConfig so the
+        // app can read it at runtime without a config file.
+        // Rajat's project: 2ebcfb44568b429ab383394e75b6f1cc
+        buildConfigField("String", "AGORA_APP_ID", "\"2ebcfb44568b429ab383394e75b6f1cc\"")
+
+        // Agora native libs — include all ABIs so the universal APK works
+        // on every phone.
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+        }
     }
 
     signingConfigs {
@@ -34,11 +43,6 @@ android {
             if (keystorePropertiesFile.exists()) {
                 keyAlias = keystoreProperties["keyAlias"] as String
                 keyPassword = keystoreProperties["keyPassword"] as String
-                // CRITICAL: use rootProject.file() so the path resolves
-                // relative to the repo root, not the app/ module dir.
-                // Without this, storeFile=micup-release.jks resolves to
-                // app/micup-release.jks and the build fails with
-                // "Keystore file not found".
                 storeFile = rootProject.file(keystoreProperties["storeFile"] as String)
                 storePassword = keystoreProperties["storePassword"] as String
             }
@@ -47,20 +51,12 @@ android {
 
     buildTypes {
         release {
-            // Temporarily disabled minify + shrinkResources to rule out R8
-            // issues that could cause crashes on some devices. Once the app
-            // is confirmed stable, re-enable with:
-            //   isMinifyEnabled = true
-            //   isShrinkResources = true
             isMinifyEnabled = false
             isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // CRITICAL: if no release keystore is configured, fall back to the
-            // debug signing config so the APK actually installs. An unsigned
-            // release APK fails with "invalid package" on every phone.
             signingConfig = if (keystorePropertiesFile.exists()) {
                 signingConfigs.getByName("release")
             } else {
@@ -73,27 +69,6 @@ android {
         }
     }
 
-    // Per-architecture APKs — only enabled when explicitly requested
-    // via -PabiSplits=true. Disabled by default for GitHub Releases
-    // (we publish one universal APK for simplicity — friends don't
-    // want to pick which APK to download).
-    val enableAbiSplits = (project.findProperty("abiSplits") as? String)?.toBoolean() ?: false
-    if (enableAbiSplits) {
-        splits {
-            abi {
-                isEnable = true
-                reset()
-                include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
-                isUniversalApk = true
-            }
-        }
-    }
-
-    // Kotlin 2.2.20 + AGP 8.7.2 has a known lint incompatibility — the
-    // NonNullableMutableLiveData detector crashes the lint task. Coral-X
-    // works around this by bumping AGP to 8.13.2; we'll do the same
-    // eventually, but for now disabling the broken check + the
-    // abort-on-error behavior keeps the release build green.
     lint {
         disable += "NullSafeMutableLiveData"
         abortOnError = false
@@ -115,6 +90,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {
@@ -145,11 +121,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
 
-    // WebRTC — the engine that powers voice
-    implementation(libs.stream.webrtc.android)
-
-    implementation(libs.coil.compose)
-    implementation(libs.kyant.backdrop)
-    implementation(libs.lottie.compose)
-    implementation(libs.okhttp)
+    // Agora voice SDK — the engine that powers voice.
+    // Replaces WebRTC entirely. Same SDK Free Fire uses.
+    implementation(libs.agora.voice.sdk)
 }

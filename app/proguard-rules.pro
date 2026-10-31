@@ -1,9 +1,11 @@
 # Default ProGuard rules for MicUp.
-# WebRTC / libwebrtc
--keep class org.webrtc.** { *; }
--keep class io.getstream.webrtc.** { *; }
--dontwarn org.webrtc.**
--dontwarn io.getstream.webrtc.**
+# Agora voice SDK
+-keep class io.agora.** { *; }
+-keep class io.agora.rtc.** { *; }
+-keep class io.agora.rtc2.** { *; }
+-dontwarn io.agora.**
+-dontwarn io.agora.rtc.**
+-dontwarn io.agora.rtc2.**
 
 # kotlinx.serialization
 -keepattributes *Annotation*, InnerClasses

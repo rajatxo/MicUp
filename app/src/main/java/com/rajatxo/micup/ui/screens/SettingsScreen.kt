@@ -47,7 +47,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rajatxo.micup.R
@@ -63,7 +62,6 @@ import com.rajatxo.micup.ui.theme.TextSecondary
 fun SettingsScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     val prefs = remember { MicUpPrefs(ctx) }
-    var signalingUrl by remember { mutableStateOf(prefs.signalingUrl) }
     var displayName by remember { mutableStateOf(prefs.displayName) }
 
     Column(
@@ -137,92 +135,24 @@ fun SettingsScreen(onBack: () -> Unit) {
 
         Spacer(Modifier.height(16.dp))
 
-        // Contact links
-        GlassCard(
-            modifier = Modifier.fillMaxWidth(),
-            cornerRadius = 24
-        ) {
-            Column {
-                LinkRow(
-                    icon = Icons.Filled.Person,
-                    label = "Developer — @rajat_xo",
-                    onClick = {
-                        ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ctx.getString(R.string.developer_telegram))))
-                    }
-                )
-                Divider()
-                LinkRow(
-                    icon = Icons.Filled.Group,
-                    label = "Support Group",
-                    onClick = {
-                        ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ctx.getString(R.string.support_group))))
-                    }
-                )
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        // Signaling server config — required for voice rooms to actually connect.
+        // Display name card — only user-configurable setting now
         GlassCard(
             modifier = Modifier.fillMaxWidth(),
             cornerRadius = 24
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text(
-                    text = "Signaling Server",
+                    text = "Display name",
                     style = MaterialTheme.typography.titleMedium,
                     color = TextPrimary
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "WebSocket URL of your Cloudflare Worker. " +
-                        "Deploy the worker.js from the repo, then paste the URL here.",
+                    text = "Shown to your squad when you join a room.",
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary
                 )
                 Spacer(Modifier.height(14.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Color(0x14FFFFFF))
-                        .border(1.dp, GlassStroke, RoundedCornerShape(14.dp))
-                        .padding(horizontal = 14.dp),
-                    contentAlignment = Alignment.CenterStart
-                ) {
-                    if (signalingUrl.isEmpty()) {
-                        Text(
-                            text = "wss://your-worker.workers.dev",
-                            color = TextSecondary.copy(alpha = 0.4f),
-                            style = TextStyle(fontSize = 14.sp)
-                        )
-                    }
-                    BasicTextField(
-                        value = signalingUrl,
-                        onValueChange = {
-                            signalingUrl = it
-                            prefs.signalingUrl = it
-                        },
-                        singleLine = true,
-                        cursorBrush = SolidColor(Coral),
-                        textStyle = TextStyle(
-                            fontSize = 14.sp,
-                            color = TextPrimary,
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                        ),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-                Spacer(Modifier.height(14.dp))
-                Text(
-                    text = "Display name (shown to squad)",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = TextSecondary
-                )
-                Spacer(Modifier.height(8.dp))
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -260,6 +190,32 @@ fun SettingsScreen(onBack: () -> Unit) {
 
         Spacer(Modifier.height(16.dp))
 
+        // Contact links
+        GlassCard(
+            modifier = Modifier.fillMaxWidth(),
+            cornerRadius = 24
+        ) {
+            Column {
+                LinkRow(
+                    icon = Icons.Filled.Person,
+                    label = "Developer — @rajat_xo",
+                    onClick = {
+                        ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ctx.getString(R.string.developer_telegram))))
+                    }
+                )
+                Divider()
+                LinkRow(
+                    icon = Icons.Filled.Group,
+                    label = "Support Group",
+                    onClick = {
+                        ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ctx.getString(R.string.support_group))))
+                    }
+                )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
         // Tech card
         GlassCard(
             modifier = Modifier.fillMaxWidth(),
@@ -273,12 +229,12 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "MicUp uses WebRTC (Opus 48kHz, software AEC3/NS/AGC) " +
-                        "with USAGE_GAME audio attributes. The OS treats your " +
-                        "voice chat as a game sound — so it never ducks your " +
-                        "gameplay audio. Discord and Free Fire's in-game voice " +
-                        "both trigger MODE_IN_COMMUNICATION which is why they " +
-                        "kill your game sound. MicUp doesn't.",
+                    text = "MicUp uses Agora (the same SDK Free Fire uses) " +
+                        "configured with MUSIC_HIGH_QUALITY audio profile + " +
+                        "GAME_STREAMING scenario. The OS treats your voice " +
+                        "chat as a game sound — so it never ducks your " +
+                        "gameplay audio. Audio quality matches Telegram " +
+                        "(128kbps Opus with AI noise suppression).",
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary
                 )

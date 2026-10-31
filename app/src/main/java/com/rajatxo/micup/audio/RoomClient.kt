@@ -2,10 +2,10 @@ package com.rajatxo.micup.audio
 
 import android.content.Context
 import android.util.Log
-import com.rajatxo.micup.data.MicUpPrefs
+import io.agora.rtc.Constants
+import io.agora.rtc.IRtcEngineEventHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -14,42 +14,25 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-import org.webrtc.AddIceObserver
-import org.webrtc.DataChannel
-import org.webrtc.IceCandidate
-import org.webrtc.MediaStream
-import org.webrtc.PeerConnection
-import org.webrtc.RtpReceiver
-import org.webrtc.SdpObserver
-import org.webrtc.SessionDescription
-import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Manages a single voice-room session.
+ * Manages a single voice-room session using Agora.
  *
- * Uses a P2P full-mesh topology — every participant has a direct
- * PeerConnection with every other participant. Works great for
- * 2-6 person squads (Free Fire / BGMI / CODM standard party size).
- * For larger rooms we'd need an SFU server — out of scope for v1.
+ * Replaces the WebRTC-based RoomClient. Agora handles all the signaling,
+ * NAT traversal, and audio mixing server-side — we just join/leave a
+ * channel by name and Agora does the rest.
  *
- * Signaling flows over a WebSocket relay. Default URL points at a
- * public echo broker; can be swapped in Settings for a self-hosted one.
+ * Channel name = room code. Anyone who joins the same channel name
+ * (e.g., "ABC234") can talk to each other.
  */
-class RoomClient(
-    private val context: Context,
-    private val signalingUrl: String = MicUpPrefs(context).signalingUrl
-) {
+class RoomClient(private val context: Context) {
+
     companion object {
         private const val TAG = "MicUp/RoomClient"
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var signaling: SignalingClient? = null
-    private val engine = VoiceEngine(context)
-    private val peers = ConcurrentHashMap<String, PeerConnection>()
-    private val iceCandidatesBuffer = ConcurrentHashMap<String, MutableList<IceCandidate>>()
+    private val engine = AgoraVoiceEngine.getInstance(context)
 
     private val _state = MutableStateFlow<RoomState>(RoomState.Idle)
     val state: StateFlow<RoomState> = _state.asStateFlow()
@@ -57,259 +40,132 @@ class RoomClient(
     private val _events = MutableSharedFlow<RoomEvent>(extraBufferCapacity = 16)
     val events: SharedFlow<RoomEvent> = _events.asSharedFlow()
 
-    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    /** The Agora event handler — receives callbacks from the SDK. */
+    private val eventHandler = object : IRtcEngineEventHandler() {
+        override fun onJoinChannelSuccess(channel: String?, uid: Int, elapsed: Int) {
+            Log.i(TAG, "Joined channel $channel as uid $uid in ${elapsed}ms")
+            _state.value = RoomState.Joined(
+                roomCode = channel ?: "",
+                isHost = false,
+                localId = uid.toString(),
+                participants = listOf(uid.toString())
+            )
+        }
 
-    /** Local participant ID (random per session). */
-    private val localId: String = randomId()
+        override fun onUserJoined(uid: Int, elapsed: Int) {
+            Log.i(TAG, "Remote user $uid joined")
+            scope.launch {
+                _events.emit(RoomEvent.PeerJoined(uid.toString(), "Player $uid"))
+            }
+        }
 
-    /** Display name — set by the user, persisted in shared prefs. */
-    var localName: String = "Player"
-        private set
+        override fun onUserOffline(uid: Int, reason: Int) {
+            Log.i(TAG, "Remote user $uid left (reason=$reason)")
+            scope.launch {
+                _events.emit(RoomEvent.PeerLeft(uid.toString()))
+            }
+        }
 
-    fun setLocalName(name: String) { localName = name }
+        override fun onError(err: Int) {
+            Log.e(TAG, "Agora error: $err")
+            scope.launch {
+                _events.emit(RoomEvent.AgoraError("Agora error code: $err"))
+            }
+        }
 
-    /** Read the display name fresh from prefs (so Settings changes are picked up). */
-    private fun freshLocalName(): String = MicUpPrefs(context).displayName
+        @Suppress("UNUSED_PARAMETER")
+        override fun onAudioVolumeIndication(
+            speakers: Array<out AudioVolumeInfo>?,
+            totalVolume: Int
+        ) {
+            // Used for "who's talking" indicators — emits for each speaker
+            // with their current volume level.
+            speakers?.forEach { info ->
+                val talking = info.volume > 30  // arbitrary threshold
+                scope.launch {
+                    _events.emit(RoomEvent.PeerAudioLevel(info.uid.toString(), talking))
+                }
+            }
+        }
+    }
 
-    /**
-     * Read the signaling URL FRESH from prefs on every connect attempt.
-     *
-     * Previously this was read once at RoomClient construction time,
-     * which meant if the user updated the URL in Settings after the
-     * HomeScreen loaded (and thus after the RoomViewModel was created),
-     * the cached default URL was used instead of the new one. That's
-     * why "Create Room" was hitting relay.micup.app even after the user
-     * pasted their own URL in Settings.
-     */
-    private fun freshSignalingUrl(): String =
-        MicUpPrefs(context).signalingUrl.trim().trimEnd('/', '?', '&')
+    /** Local user ID — Agora assigns this when we join the channel. */
+    private var localUid: Int = 0
+
+    /** Display name — read fresh from prefs. */
+    private fun freshLocalName(): String =
+        com.rajatxo.micup.data.MicUpPrefs(context).displayName
 
     // ---------- Public API ----------
 
-    /** Create a new room. The room code is returned via [RoomState.Joined]. */
-    fun createRoom(): Job = scope.launch {
-        // Generate the code IMMEDIATELY so we can show "Connecting to ABC234"
-        // without waiting for the voice engine to init (which takes ~1-2 sec).
+    /** Create a new room (becomes host). Channel name = room code. */
+    fun createRoom(): kotlinx.coroutines.Job = scope.launch {
         val code = generateRoomCode()
         _state.value = RoomState.Connecting(code, isHost = true)
-        if (!engine.init()) {
+        if (engine.init(eventHandler) == null) {
             _state.value = RoomState.Failed("Voice engine init failed")
             return@launch
         }
-        connectSignaling(code, isHost = true)
+        val result = engine.joinChannel(code, 0)
+        if (result != 0) {
+            _state.value = RoomState.Failed("Failed to create room (code $result)")
+        }
+        // State becomes Joined when onJoinChannelSuccess fires.
     }
 
     /** Join an existing room by its 6-character code. */
-    fun joinRoom(code: String): Job = scope.launch {
+    fun joinRoom(code: String): kotlinx.coroutines.Job = scope.launch {
         val upperCode = code.uppercase()
         _state.value = RoomState.Connecting(upperCode, isHost = false)
-        if (!engine.init()) {
+        if (engine.init(eventHandler) == null) {
             _state.value = RoomState.Failed("Voice engine init failed")
             return@launch
         }
-        connectSignaling(upperCode, isHost = false)
+        val result = engine.joinChannel(upperCode, 0)
+        if (result != 0) {
+            _state.value = RoomState.Failed("Failed to join room (code $result)")
+        }
     }
 
     /** Mute / unmute the local mic. */
     fun setMuted(muted: Boolean) {
-        engine.localAudioTrack()?.let { it.setEnabled(!muted) }
+        engine.muteLocalAudioStream(muted)
         scope.launch { _events.emit(RoomEvent.LocalMuteChanged(muted)) }
     }
 
     /**
-     * Leave the room and tear everything down. SYNCHRONOUS on the calling
-     * thread — the UI state goes to Idle IMMEDIATELY so the user sees the
-     * home screen without delay. Cleanup runs in the background.
+     * Leave the room. State goes to Idle IMMEDIATELY so the UI navigates
+     * back without delay. Cleanup runs in the background.
      *
-     * Idempotent: safe to call multiple times rapidly (the user tapping
-     * the Leave button 7-8 times doesn't cause issues).
+     * Idempotent — safe to call multiple times rapidly.
      */
     fun leave() {
-        // Set state to Idle FIRST — UI navigates back immediately.
         _state.value = RoomState.Idle
-        // Then do cleanup in the background. Use a fresh non-cancellable
-        // scope so the cleanup completes even if the calling coroutine
-        // is cancelled.
         scope.launch {
-            try {
-                signaling?.send(json.encodeToString(SignalMessage.serializer(),
-                    SignalMessage.Bye(localId)))
-            } catch (_: Throwable) {}
-            // Small delay to let the Bye message flush.
-            kotlinx.coroutines.delay(100)
-            peers.values.forEach { runCatching { it.dispose() } }
-            peers.clear()
-            iceCandidatesBuffer.clear()
-            signaling?.disconnect()
-            signaling = null
-            engine.release()
+            try { engine.leaveChannel() } catch (_: Throwable) {}
         }
     }
 
-    // ---------- Signaling ----------
-
-    /**
-     * Build the WebSocket URL. Reads the signaling URL FRESH from prefs
-     * (so changes in Settings are picked up) and normalizes it:
-     *  - strips trailing slashes (so we don't end up with //?room=...)
-     *  - strips trailing ? and & (in case the URL already had query params)
-     */
-    private fun buildWebSocketUrl(roomCode: String): String {
-        val base = freshSignalingUrl()
-        return "$base?room=$roomCode&peer=$localId"
-    }
-
-    private fun connectSignaling(roomCode: String, isHost: Boolean) {
-        val finalUrl = buildWebSocketUrl(roomCode)
-        Log.i(TAG, "Connecting to signaling: $finalUrl")
-        signaling = SignalingClient(
-            url = finalUrl,
-            onOpen = {
-                _state.value = RoomState.Joined(
-                    roomCode = roomCode,
-                    isHost = isHost,
-                    localId = localId,
-                    participants = listOf(localId)
-                )
-                // Announce ourselves to the room with the freshest name from prefs.
-                val name = freshLocalName()
-                signaling?.send(json.encodeToString(SignalMessage.serializer(),
-                    SignalMessage.Hello(localId, name, isHost)))
-            },
-            onMessage = ::handleSignal,
-            onClose = { _state.value = RoomState.Idle },
-            onError = { err ->
-                // Surface the URL in the error so we can debug 404s.
-                _state.value = RoomState.Failed("$err\n\nURL: $finalUrl")
-            }
-        ).also { it.connect() }
-    }
-
-    private fun handleSignal(raw: String) {
-        val msg = runCatching { json.decodeFromString(SignalMessage.serializer(), raw) }.getOrNull()
-            ?: return
-        when (msg) {
-            is SignalMessage.Hello -> {
-                // A new peer announced themselves. The existing peer with the
-                // lexicographically smaller ID initiates the offer — this avoids
-                // both sides racing to create offers.
-                if (localId < msg.id) {
-                    createOfferFor(msg.id, msg.name)
-                }
-                _events.tryEmit(RoomEvent.PeerJoined(msg.id, msg.name))
-            }
-            is SignalMessage.Offer -> receiveOffer(msg.from, msg.sdp)
-            is SignalMessage.Answer -> receiveAnswer(msg.from, msg.sdp)
-            is SignalMessage.Ice -> receiveIce(msg.from, msg.candidate)
-            is SignalMessage.Bye -> removePeer(msg.id)
-        }
-    }
-
-    // ---------- PeerConnection lifecycle ----------
-
-    private fun createOfferFor(peerId: String, peerName: String) {
-        val pc = makePeerConnection(peerId) ?: return
-        peers[peerId] = pc
-
-        pc.addTrack(engine.localAudioTrack())
-        pc.createOffer(object : SdpObserver {
-            override fun onCreateSuccess(sdp: SessionDescription?) {
-                pc.setLocalDescription(SimpleSdpObserver(), sdp)
-                signaling?.send(json.encodeToString(SignalMessage.serializer(),
-                    SignalMessage.Offer(localId, sdp!!.description)))
-            }
-            override fun onSetSuccess() {}
-            override fun onCreateFailure(error: String?) { Log.e(TAG, "offer create fail: $error") }
-            override fun onSetFailure(error: String?) {}
-        }, AudioConfig.audioConstraints())
-    }
-
-    private fun receiveOffer(fromPeer: String, sdp: String) {
-        val pc = peers[fromPeer] ?: makePeerConnection(fromPeer)?.also { peers[fromPeer] = it } ?: return
-        pc.setRemoteDescription(SimpleSdpObserver(), SessionDescription(SessionDescription.Type.OFFER, sdp))
-        pc.addTrack(engine.localAudioTrack())
-        pc.createAnswer(object : SdpObserver {
-            override fun onCreateSuccess(answerSdp: SessionDescription?) {
-                pc.setLocalDescription(SimpleSdpObserver(), answerSdp)
-                signaling?.send(json.encodeToString(SignalMessage.serializer(),
-                    SignalMessage.Answer(localId, answerSdp!!.description)))
-            }
-            override fun onSetSuccess() {}
-            override fun onCreateFailure(error: String?) {}
-            override fun onSetFailure(error: String?) {}
-        }, AudioConfig.audioConstraints())
-    }
-
-    private fun receiveAnswer(fromPeer: String, sdp: String) {
-        val pc = peers[fromPeer] ?: return
-        pc.setRemoteDescription(SimpleSdpObserver(), SessionDescription(SessionDescription.Type.ANSWER, sdp))
-        // Flush any buffered ICE candidates.
-        iceCandidatesBuffer.remove(fromPeer)?.forEach { pc.addIceCandidate(it, SimpleIceObserver()) }
-    }
-
-    private fun receiveIce(fromPeer: String, candidate: IceCandidateJson) {
-        val pc = peers[fromPeer]
-        val ice = candidate.toWebRtc()
-        if (pc == null || pc.remoteDescription == null) {
-            // Buffer until remote SDP is set.
-            iceCandidatesBuffer.getOrPut(fromPeer) { mutableListOf() }.add(ice)
-        } else {
-            pc.addIceCandidate(ice, SimpleIceObserver())
-        }
-    }
-
-    private fun removePeer(peerId: String) {
-        peers.remove(peerId)?.dispose()
-        iceCandidatesBuffer.remove(peerId)
-        _events.tryEmit(RoomEvent.PeerLeft(peerId))
-    }
-
-    private fun makePeerConnection(peerId: String): PeerConnection? {
-        return engine.createPeerConnection(VoiceEngine.defaultIceServers, object : PeerConnection.Observer {
-            override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
-            override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
-                if (state == PeerConnection.IceConnectionState.CONNECTED) {
-                    _events.tryEmit(RoomEvent.PeerConnected(peerId))
-                }
-                if (state == PeerConnection.IceConnectionState.DISCONNECTED ||
-                    state == PeerConnection.IceConnectionState.FAILED) {
-                    _events.tryEmit(RoomEvent.PeerDisconnected(peerId))
-                }
-            }
-            override fun onIceConnectionReceivingChange(receiving: Boolean) {}
-            override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
-            override fun onIceCandidate(candidate: IceCandidate?) {
-                candidate ?: return
-                signaling?.send(json.encodeToString(SignalMessage.serializer(),
-                    SignalMessage.Ice(localId, IceCandidateJson.fromWebRtc(candidate))))
-            }
-            override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
-            override fun onAddStream(stream: MediaStream?) {}
-            override fun onRemoveStream(stream: MediaStream?) {}
-            override fun onDataChannel(dc: DataChannel?) {}
-            override fun onRenegotiationNeeded() {}
-            override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {
-                _events.tryEmit(RoomEvent.PeerAudioReady(peerId))
-            }
-        })
+    /** Tear down everything when the app is done with the engine. */
+    fun release() {
+        try { engine.leaveChannel() } catch (_: Throwable) {}
+        try { engine.release() } catch (_: Throwable) {}
+        _state.value = RoomState.Idle
     }
 
     // ---------- Helpers ----------
 
     private fun generateRoomCode(): String {
-        val alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  // no I/O/0/1 for readability
+        // Crockford-like — exclude I/O/0/1 for readability over the phone.
+        val alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
         return (1..6).map { alphabet.random() }.joinToString("")
     }
-
-    private fun randomId(): String =
-        (1..12).map { "abcdefghijklmnopqrstuvwxyz0123456789".random() }.joinToString("")
 }
 
-// ---------- State / Events / Signaling DTOs ----------
+// ---------- State / Events ----------
 
 sealed interface RoomState {
     data object Idle : RoomState
-    /** Transitioning to a room — show a loading spinner. */
     data class Connecting(val roomCode: String, val isHost: Boolean) : RoomState
     data class Joined(
         val roomCode: String,
@@ -323,44 +179,7 @@ sealed interface RoomState {
 sealed interface RoomEvent {
     data class PeerJoined(val id: String, val name: String) : RoomEvent
     data class PeerLeft(val id: String) : RoomEvent
-    data class PeerConnected(val id: String) : RoomEvent
-    data class PeerDisconnected(val id: String) : RoomEvent
-    data class PeerAudioReady(val id: String) : RoomEvent
+    data class PeerAudioLevel(val id: String, val talking: Boolean) : RoomEvent
+    data class AgoraError(val message: String) : RoomEvent
     data class LocalMuteChanged(val muted: Boolean) : RoomEvent
-}
-
-@Serializable
-sealed interface SignalMessage {
-    @Serializable data class Hello(val id: String, val name: String, val isHost: Boolean) : SignalMessage
-    @Serializable data class Offer(val from: String, val sdp: String) : SignalMessage
-    @Serializable data class Answer(val from: String, val sdp: String) : SignalMessage
-    @Serializable data class Ice(val from: String, val candidate: IceCandidateJson) : SignalMessage
-    @Serializable data class Bye(val id: String) : SignalMessage
-}
-
-@Serializable
-data class IceCandidateJson(
-    val sdp: String,
-    val sdpMid: String?,
-    val sdpMLineIndex: Int
-) {
-    fun toWebRtc(): IceCandidate = IceCandidate(sdpMid, sdpMLineIndex, sdp)
-    companion object {
-        fun fromWebRtc(c: IceCandidate): IceCandidateJson =
-            IceCandidateJson(c.sdp, c.sdpMid, c.sdpMLineIndex)
-    }
-}
-
-/** No-op SdpObserver — MicUp doesn't need to react to set-success. */
-class SimpleSdpObserver : SdpObserver {
-    override fun onCreateSuccess(p0: SessionDescription?) {}
-    override fun onSetSuccess() {}
-    override fun onCreateFailure(p0: String?) {}
-    override fun onSetFailure(p0: String?) {}
-}
-
-/** No-op AddIceObserver — we don't need to react when ICE candidates land. */
-class SimpleIceObserver : AddIceObserver {
-    override fun onAddSuccess() {}
-    override fun onAddFailure(error: String?) {}
 }

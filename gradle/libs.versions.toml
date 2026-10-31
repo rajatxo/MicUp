@@ -8,11 +8,7 @@ composeBom = "2024.10.01"
 navigationCompose = "2.8.3"
 kotlinxSerialization = "1.7.3"
 kotlinxCoroutines = "1.9.0"
-streamWebrtc = "1.3.9"
-coil = "3.0.0-rc01"
-kyantBackdrop = "1.0.0"
-lottie = "6.5.2"
-okhttp = "4.12.0"
+agora = "4.3.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -32,20 +28,10 @@ androidx-navigation-compose = { group = "androidx.navigation", name = "navigatio
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "kotlinxCoroutines" }
 
-# WebRTC — Stream's maintained distribution of Google's libwebrtc
-stream-webrtc-android = { group = "io.getstream", name = "stream-webrtc-android", version.ref = "streamWebrtc" }
-
-# Image loading
-coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
-
-# Glass morphism
-kyant-backdrop = { group = "io.github.kyant0", name = "backdrop", version.ref = "kyantBackdrop" }
-
-# Animations
-lottie-compose = { group = "com.airbnb.android", name = "lottie-compose", version.ref = "lottie" }
-
-# WebSocket signaling
-okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+# Agora voice SDK — what Free Fire uses for in-game voice.
+# We use it with MUSIC_HIGH_QUALITY + GAME_STREAMING audio scenario
+# for Telegram-quality audio that doesn't duck game sounds.
+agora-voice-sdk = { group = "io.agora.rtc", name = "voice-sdk", version.ref = "agora" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

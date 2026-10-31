@@ -6,19 +6,14 @@ import android.content.SharedPreferences
 /**
  * Tiny SharedPreferences wrapper for MicUp's user-configurable settings.
  *
- * No DataStore / Room — overkill for v1. SharedPreferences is enough
- * for the signaling URL + display name.
+ * With Agora handling all signaling, the only user-configurable setting
+ * is the display name. Agora's App ID is baked into BuildConfig at
+ * build time.
  */
 class MicUpPrefs(context: Context) {
 
     private val prefs: SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-
-    /** WebSocket URL of the signaling server. Defaults to the public
-     *  placeholder — change in Settings after deploying your own worker. */
-    var signalingUrl: String
-        get() = prefs.getString(KEY_SIGNALING_URL, DEFAULT_SIGNALING_URL) ?: DEFAULT_SIGNALING_URL
-        set(value) { prefs.edit().putString(KEY_SIGNALING_URL, value).apply() }
 
     /** Display name shown to other participants in a voice room. */
     var displayName: String
@@ -27,16 +22,6 @@ class MicUpPrefs(context: Context) {
 
     companion object {
         private const val PREFS_NAME = "micup_prefs"
-        private const val KEY_SIGNALING_URL = "signaling_url"
         private const val KEY_DISPLAY_NAME = "display_name"
-
-        /**
-         * The default signaling URL — Rajat's deployed Cloudflare Worker.
-         *
-         * Friends who install the app don't need to set up their own server.
-         * They just install the APK and it works — this URL is pre-baked in.
-         * Rajat only deploys the worker ONCE, and everyone shares it.
-         */
-        const val DEFAULT_SIGNALING_URL = "wss://micup-signal.chxsexo.workers.dev"
     }
 }
