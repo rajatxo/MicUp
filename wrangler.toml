@@ -1,0 +1,23 @@
+name = "micup-signal"
+main = "server/worker.js"
+compatibility_date = "2024-10-01"
+
+# Free tier limits (no payment required):
+#   - 100,000 requests/day
+#   - 10ms CPU per request
+#   - WebSocket connections: unlimited
+#
+# Deploy via Cloudflare dashboard (Pages, connect to GitHub):
+#   1. https://dash.cloudflare.com → Workers & Pages → Create application
+#   2. Choose "Pages" → Connect to Git → pick rajatxo/MicUp
+#   3. Name: micup-signal (lowercase, hyphen, no spaces)
+#   4. Production branch: main
+#   5. Build command: (leave empty)
+#   6. Deploy command: npx wrangler deploy
+#   7. Save and Deploy
+#
+# Output will be a URL like:
+#   https://micup-signal.<your-subdomain>.workers.dev
+#
+# Then change https:// to wss:// for use in the MicUp app:
+#   wss://micup-signal.<your-subdomain>.workers.dev
