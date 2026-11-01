@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -57,7 +59,6 @@ import com.rajatxo.micup.audio.SignalingMessage
 import com.rajatxo.micup.audio.WebRtcClient
 import org.webrtc.IceCandidate
 import org.webrtc.PeerConnection
-import org.webrtc.SessionDescription
 
 private const val SIGNALING_URL = "wss://micup-signal.chxsexo.workers.dev"
 
@@ -73,12 +74,17 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+data class Participant(
+    val peerId: String,
+    val name: String,
+    val iceState: String = "new"
+)
+
 @Composable
 private fun VoiceChatScreen() {
     val context = LocalContext.current
     val appContext = context.applicationContext
 
-    // Permissions
     var hasMicPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
@@ -92,39 +98,31 @@ private fun VoiceChatScreen() {
         if (!hasMicPermission) permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
 
-    // State
     var roomCode by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("Enter a 5-char room code") }
     var isConnected by remember { mutableStateOf(false) }
     var isConnecting by remember { mutableStateOf(false) }
-    var iceState by remember { mutableStateOf("") }
     var isMuted by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    // Peer ID — random per session
     val myPeerId = remember {
         (1..8).map { "abcdefghijklmnopqrstuvwxyz0123456789".random() }.joinToString("")
     }
-    var remotePeerId by remember { mutableStateOf<String?>(null) }
 
-    // Perfect negotiation state
-    // isCaller = true means this phone creates the offer
-    // Determined by peer ID comparison: lower ID = caller
-    var isCaller by remember { mutableStateOf<Boolean?>(null) }
-    var makingOffer by remember { mutableStateOf(false) }
-    var ignoreOffer by remember { mutableStateOf(false) }
+    // Participant list (excluding self)
+    val participants = remember { mutableStateOf<List<Participant>>(emptyList()) }
 
-    // Holders for cleanup
     var signaling by remember { mutableStateOf<SignalingClient?>(null) }
     var webRtc by remember { mutableStateOf<WebRtcClient?>(null) }
-    var hasCreatedOffer by remember { mutableStateOf(false) }
 
     DisposableEffect(Unit) {
         onDispose {
+            try { com.rajatxo.micup.audio.VoiceService.stop(appContext) } catch (_: Throwable) {}
             try { webRtc?.release() } catch (_: Throwable) {}
             try { signaling?.disconnect() } catch (_: Throwable) {}
         }
     }
+
     Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
         Column(
             modifier = Modifier
@@ -134,11 +132,10 @@ private fun VoiceChatScreen() {
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Header
             Text("MicUp", color = Color(0xFFFF6B6B), fontSize = 28.sp, fontWeight = FontWeight.Bold)
-            Text("Step 6+7 — Two Phone Voice Test", color = Color(0xFF888888), fontSize = 12.sp)
+            Text("Step 10 — Multi-Peer Voice", color = Color(0xFF888888), fontSize = 12.sp)
 
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(24.dp))
 
             if (!hasMicPermission) {
                 Text("Need mic permission", color = Color(0xFFFF5252), fontSize = 14.sp)
@@ -153,7 +150,6 @@ private fun VoiceChatScreen() {
                     Text("Grant permission", color = Color.Black, fontWeight = FontWeight.SemiBold)
                 }
             } else if (!isConnected && !isConnecting) {
-                // Room code input + Connect button
                 Text("Room Code", color = Color(0xFF888888), fontSize = 12.sp)
                 Spacer(Modifier.height(8.dp))
                 Box(
@@ -199,55 +195,44 @@ private fun VoiceChatScreen() {
                             isConnecting = true
                             errorMessage = null
                             status = "Connecting to signaling..."
-                            hasCreatedOffer = false
+                            participants.value = emptyList()
 
-                            // Create WebRTC client
-                            val rtc = WebRtcClient(appContext, object : WebRtcClient.Listener {
-                                override fun onIceConnectionStateChange(state: PeerConnection.IceConnectionState) {
-                                    iceState = state.name
+                            val rtc = WebRtcClient(appContext, myPeerId, object : WebRtcClient.Listener {
+                                override fun onPeerIceStateChanged(peerId: String, state: PeerConnection.IceConnectionState) {
+                                    val stateName = state.name
+                                    participants.value = participants.value.map {
+                                        if (it.peerId == peerId) it.copy(iceState = stateName) else it
+                                    }
+                                    val connectedCount = participants.value.count { it.iceState == "CONNECTED" || it.iceState == "COMPLETED" }
                                     status = when (state) {
-                                        PeerConnection.IceConnectionState.CHECKING -> "Connecting..."
+                                        PeerConnection.IceConnectionState.CHECKING -> "Connecting to ${peerId.take(4)}..."
                                         PeerConnection.IceConnectionState.CONNECTED -> {
-                                            // START the foreground service when voice connects.
-                                            // This keeps the mic + WebRTC alive when the user
-                                            // backgrounds MicUp to open Free Fire.
-                                            com.rajatxo.micup.audio.VoiceService.start(appContext)
-                                            "✓ CONNECTED — speak now!"
+                                            if (connectedCount >= 1) com.rajatxo.micup.audio.VoiceService.start(appContext)
+                                            "✓ Connected (${connectedCount + 1} in room)"
                                         }
                                         PeerConnection.IceConnectionState.COMPLETED -> {
-                                            com.rajatxo.micup.audio.VoiceService.start(appContext)
-                                            "✓ CONNECTED — speak now!"
+                                            if (connectedCount >= 1) com.rajatxo.micup.audio.VoiceService.start(appContext)
+                                            "✓ Connected (${connectedCount + 1} in room)"
                                         }
-                                        PeerConnection.IceConnectionState.FAILED -> {
-                                            com.rajatxo.micup.audio.VoiceService.stop(appContext)
-                                            "Connection failed"
-                                        }
-                                        PeerConnection.IceConnectionState.DISCONNECTED -> {
-                                            com.rajatxo.micup.audio.VoiceService.stop(appContext)
-                                            "Disconnected"
-                                        }
-                                        else -> state.name
+                                        PeerConnection.IceConnectionState.FAILED -> "Connection to ${peerId.take(4)} failed"
+                                        PeerConnection.IceConnectionState.DISCONNECTED -> "${peerId.take(4)} disconnected"
+                                        else -> stateName
                                     }
                                 }
-                                override fun onIceCandidate(candidate: IceCandidate) {
+                                override fun onIceCandidateForPeer(peerId: String, candidate: IceCandidate) {
                                     signaling?.send(SignalingMessage.Ice(
-                                        myPeerId,
-                                        candidate.sdp,
-                                        candidate.sdpMid,
-                                        candidate.sdpMLineIndex
+                                        myPeerId, peerId,
+                                        candidate.sdp, candidate.sdpMid, candidate.sdpMLineIndex
                                     ))
                                 }
-                                override fun onOfferReady(sdp: String) {
-                                    makingOffer = false
-                                    signaling?.send(SignalingMessage.Offer(myPeerId, sdp))
+                                override fun onOfferReadyForPeer(peerId: String, sdp: String) {
+                                    signaling?.send(SignalingMessage.Offer(myPeerId, peerId, sdp))
                                 }
-                                override fun onAnswerReady(sdp: String) {
-                                    signaling?.send(SignalingMessage.Answer(myPeerId, sdp))
+                                override fun onAnswerReadyForPeer(peerId: String, sdp: String) {
+                                    signaling?.send(SignalingMessage.Answer(myPeerId, peerId, sdp))
                                 }
-                                override fun onError(message: String) {
-                                    errorMessage = message
-                                    status = "FAILED"
-                                    isConnecting = false
+                                override fun onPeerError(peerId: String, message: String) {
+                                    errorMessage = "[$peerId] $message"
                                 }
                             })
 
@@ -259,79 +244,49 @@ private fun VoiceChatScreen() {
                             }
                             webRtc = rtc
 
-                            // Create signaling client
                             val sig = SignalingClient(SIGNALING_URL, object : SignalingClient.Listener {
                                 override fun onConnected() {
-                                    status = "Waiting for peer..."
+                                    status = "Waiting for peers..."
                                     isConnected = true
                                     isConnecting = false
-                                    // Announce ourselves to the room.
-                                    // The server broadcasts this to ALL other sockets in the room.
                                     signaling?.send(SignalingMessage.Hello(myPeerId, "Player"))
                                 }
                                 override fun onMessage(message: SignalingMessage) {
                                     when (message) {
                                         is SignalingMessage.Hello -> {
-                                            remotePeerId = message.from
-                                            // Determine caller/callee role based on peer ID comparison.
-                                            // Lower peer ID = caller (creates the offer).
-                                            // This ensures EXACTLY ONE phone creates the offer,
-                                            // regardless of who joined first.
-                                            val shouldBeCaller = myPeerId < message.from
-                                            if (isCaller == null) {
-                                                isCaller = shouldBeCaller
-                                                status = if (shouldBeCaller) "Creating offer..." else "Waiting for offer..."
-                                            }
-                                            // Only the caller creates the offer, and only ONCE.
-                                            if (shouldBeCaller && !makingOffer && !hasCreatedOffer) {
-                                                makingOffer = true
-                                                hasCreatedOffer = true
-                                                status = "Creating offer..."
-                                                webRtc?.createOffer()
+                                            // New peer announced — add to participant list + create peer connection
+                                            if (message.from != myPeerId && participants.value.none { it.peerId == message.from }) {
+                                                participants.value = participants.value + Participant(message.from, message.name)
+                                                val isNew = webRtc?.addPeer(message.from) ?: false
+                                                if (isNew) {
+                                                    webRtc?.maybeCreateOffer(message.from)
+                                                }
                                             }
                                         }
                                         is SignalingMessage.Offer -> {
-                                            remotePeerId = message.from
-                                            // We received an offer — we must be the callee.
-                                            if (isCaller == null) {
-                                                isCaller = false
+                                            // Make sure we have a peer connection for this peer
+                                            if (participants.value.none { it.peerId == message.from }) {
+                                                participants.value = participants.value + Participant(message.from, message.from.take(6))
+                                                webRtc?.addPeer(message.from)
                                             }
-                                            // Perfect negotiation: handle glare
-                                            val offerCollision = makingOffer || (webRtc?.signalingState() == "have-local-offer")
-                                            val polite = isCaller == false // callee is polite
-
-                                            ignoreOffer = !polite && offerCollision
-                                            if (ignoreOffer) return
-
-                                            // If we have a local offer (glare), rollback first
-                                            if (offerCollision) {
-                                                webRtc?.rollbackOffer()
-                                            }
-
-                                            status = "Received offer, creating answer..."
-                                            webRtc?.setRemoteDescription(SessionDescription.Type.OFFER, message.sdp)
-                                            webRtc?.createAnswer()
+                                            webRtc?.handleRemoteOffer(message.from, message.sdp)
                                         }
                                         is SignalingMessage.Answer -> {
-                                            if (ignoreOffer) return
-                                            status = "Received answer, connecting..."
-                                            webRtc?.setRemoteDescription(SessionDescription.Type.ANSWER, message.sdp)
+                                            webRtc?.handleRemoteAnswer(message.from, message.sdp)
                                         }
                                         is SignalingMessage.Ice -> {
                                             val candidate = IceCandidate(message.sdpMid, message.sdpMLineIndex, message.sdp)
-                                            webRtc?.addIceCandidate(candidate)
+                                            webRtc?.addIceCandidate(message.from, candidate)
                                         }
                                         is SignalingMessage.Bye -> {
-                                            status = "Peer left"
-                                            iceState = "DISCONNECTED"
+                                            webRtc?.removePeer(message.from)
+                                            participants.value = participants.value.filterNot { it.peerId == message.from }
                                         }
                                     }
                                 }
                                 override fun onDisconnected(reason: String) {
-                                    // Don't immediately fail — show the reason
-                                    // and let the user retry
-                                    if (iceState != "CONNECTED" && iceState != "COMPLETED") {
-                                        status = "Disconnected: $reason\nTap Retry to reconnect"
+                                    if (participants.value.none { it.iceState == "CONNECTED" || it.iceState == "COMPLETED" }) {
+                                        status = "Disconnected: $reason"
                                         isConnected = false
                                         isConnecting = false
                                     }
@@ -352,92 +307,49 @@ private fun VoiceChatScreen() {
 
                 Spacer(Modifier.height(16.dp))
                 Text(
-                    "Both phones must enter the SAME room code.\nShare the code with your friend.",
-                    color = Color(0xFF888888), fontSize = 12.sp, textAlign = TextAlign.Center
+                    "All players enter the SAME room code.\nMax 4 players per room.\n~60 MB/hour per phone.",
+                    color = Color(0xFF888888), fontSize = 11.sp, textAlign = TextAlign.Center
                 )
             } else {
-                // Connected / connecting view
-                Text(status, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
-
-                if (iceState.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    Text("ICE: $iceState", color = Color(0xFF888888), fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                }
+                // Connected view
+                Text(status, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
 
                 errorMessage?.let {
-                    Spacer(Modifier.height(12.dp))
-                    Text(it, color = Color(0xFFFF5252), fontSize = 11.sp, fontFamily = FontFamily.Monospace,
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, color = Color(0xFFFF5252), fontSize = 10.sp, fontFamily = FontFamily.Monospace,
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
                             .background(Color(0x22FF5252))
-                            .padding(12.dp))
+                            .padding(8.dp))
                 }
 
-                Spacer(Modifier.height(32.dp))
+                Spacer(Modifier.height(20.dp))
 
-                // ICE state visual indicator
-                val stateColor = when (iceState) {
-                    "CONNECTED", "COMPLETED" -> Color(0xFF4ADE80)
-                    "CHECKING" -> Color(0xFFF4B400)
-                    "FAILED", "DISCONNECTED" -> Color(0xFFFF5252)
-                    else -> Color(0xFF888888)
-                }
-                Box(
-                    modifier = Modifier
-                        .size(120.dp)
-                        .clip(CircleShape)
-                        .background(stateColor.copy(alpha = 0.2f)),
-                    contentAlignment = Alignment.Center
+                // Participant list
+                Text("SQUAD (${participants.value.size + 1})", color = Color(0xFF888888), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
+
+                LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(80.dp)
-                            .clip(CircleShape)
-                            .background(stateColor)
-                    )
-                }
-
-                Spacer(Modifier.height(32.dp))
-
-                // Retry button (shown when disconnected/failed)
-                if (status.startsWith("Disconnected") || status == "FAILED") {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(50.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0xFFFF6B6B))
-                            .clickable {
-                                // Full reconnect — release old, start fresh
-                                com.rajatxo.micup.audio.VoiceService.stop(appContext)
-                                try { webRtc?.release() } catch (_: Throwable) {}
-                                try { signaling?.disconnect() } catch (_: Throwable) {}
-                                webRtc = null
-                                signaling = null
-                                isConnected = false
-                                isConnecting = false
-                                iceState = ""
-                                errorMessage = null
-                                hasCreatedOffer = false
-                                isCaller = null
-                                makingOffer = false
-                                ignoreOffer = false
-                                status = "Enter a 5-char room code"
-                            }
-                            .padding(horizontal = 24.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("Retry", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    // Self
+                    item {
+                        ParticipantRow("You", "connected", true)
                     }
-                    Spacer(Modifier.height(16.dp))
+                    // Remote participants
+                    items(participants.value) { p ->
+                        ParticipantRow(p.name.ifEmpty { p.peerId.take(6) }, p.iceState, false)
+                    }
                 }
+
+                Spacer(Modifier.height(16.dp))
 
                 // Mute + Leave buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    // Mute
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Box(
                             modifier = Modifier
@@ -456,7 +368,6 @@ private fun VoiceChatScreen() {
                         Text(if (isMuted) "Muted" else "Live", color = Color(0xFF888888), fontSize = 11.sp)
                     }
 
-                    // Leave
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Box(
                             modifier = Modifier
@@ -471,13 +382,9 @@ private fun VoiceChatScreen() {
                                     signaling = null
                                     isConnected = false
                                     isConnecting = false
-                                    iceState = ""
+                                    participants.value = emptyList()
                                     status = "Enter a 5-char room code"
-                                    remotePeerId = null
-                                    hasCreatedOffer = false
-                                    isCaller = null
-                                    makingOffer = false
-                                    ignoreOffer = false
+                                    isMuted = false
                                 },
                             contentAlignment = Alignment.Center
                         ) {
@@ -489,5 +396,58 @@ private fun VoiceChatScreen() {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ParticipantRow(name: String, iceState: String, isSelf: Boolean) {
+    val stateColor = when (iceState.lowercase()) {
+        "connected", "completed" -> Color(0xFF4ADE80)
+        "checking" -> Color(0xFFF4B400)
+        "failed", "disconnected" -> Color(0xFFFF5252)
+        else -> Color(0xFF888888)
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0x1AFFFFFF))
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(stateColor.copy(alpha = 0.2f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                name.firstOrNull()?.uppercase() ?: "?",
+                color = stateColor,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                if (isSelf) "$name (You)" else name,
+                color = Color.White,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                if (isSelf) "Connected" else iceState,
+                color = stateColor,
+                fontSize = 11.sp
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(stateColor)
+        )
     }
 }

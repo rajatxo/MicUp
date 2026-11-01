@@ -15,49 +15,53 @@ import org.webrtc.audio.JavaAudioDeviceModule
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Manages a single WebRTC peer connection for voice chat.
+ * Multi-peer WebRTC client — manages a MESH of peer connections.
  *
- * Handles:
- * - PeerConnectionFactory initialization (once)
- * - Audio capture (mic) and playback (speaker)
- * - SDP offer/answer creation and exchange
- * - ICE candidate generation and exchange
- * - Remote audio track rendering (hearing the other person)
+ * For each remote peer in the room, we create a separate PeerConnection.
+ * Each pair does its own perfect negotiation (lower peer ID = caller).
  *
- * Call flow:
- * 1. init() — sets up factory + audio track
- * 2. createOffer() — generates SDP offer (caller)
- * 3. createAnswer() — generates SDP answer (callee)
- * 4. setRemoteDescription() — applies offer/answer from remote
- * 5. addIceCandidate() — adds network path info from remote
- * 6. ICE connects → voice flows
+ * Mesh limits:
+ * - 2 people: 1 connection each (perfect)
+ * - 3 people: 2 connections each (great)
+ * - 4 people: 3 connections each (works, may get heavy on weak networks)
+ * - 5+ people: would need an SFU server (not supported)
+ *
+ * Hotspot fix: iceTransportPolicy = RELAY forces TURN relay when direct
+ * P2P fails (which happens when both phones share a hotspot).
  */
 class WebRtcClient(
     private val context: Context,
+    private val myPeerId: String,
     private val listener: Listener
 ) {
     interface Listener {
-        fun onIceConnectionStateChange(state: PeerConnection.IceConnectionState)
-        fun onIceCandidate(candidate: IceCandidate)
-        fun onOfferReady(sdp: String)
-        fun onAnswerReady(sdp: String)
-        fun onError(message: String)
+        fun onPeerIceStateChanged(peerId: String, state: PeerConnection.IceConnectionState)
+        fun onIceCandidateForPeer(peerId: String, candidate: IceCandidate)
+        fun onOfferReadyForPeer(peerId: String, sdp: String)
+        fun onAnswerReadyForPeer(peerId: String, sdp: String)
+        fun onPeerError(peerId: String, message: String)
     }
 
     private var factory: PeerConnectionFactory? = null
     private var adm: JavaAudioDeviceModule? = null
     private var audioSource: AudioSource? = null
     private var audioTrack: AudioTrack? = null
-    private var peerConnection: PeerConnection? = null
 
-    /** Buffer ICE candidates received before remote SDP is set. */
-    private val pendingIceCandidates = mutableListOf<IceCandidate>()
-    private var remoteSdpSet = false
+    /** Map of remotePeerId → PeerConnectionEntry (one per remote peer). */
+    private val peers = ConcurrentHashMap<String, PeerEntry>()
+
+    private data class PeerEntry(
+        val peerId: String,
+        val connection: PeerConnection,
+        var makingOffer: Boolean = false,
+        var ignoreOffer: Boolean = false,
+        var remoteSdpSet: Boolean = false,
+        val pendingIceCandidates: MutableList<IceCandidate> = mutableListOf()
+    )
 
     fun init(): Boolean {
         if (factory != null) return true
         return try {
-            // Initialize WebRTC native lib.
             PeerConnectionFactory.initialize(
                 PeerConnectionFactory.InitializationOptions
                     .builder(context)
@@ -65,261 +69,267 @@ class WebRtcClient(
                     .createInitializationOptions()
             )
 
-            // Build the AudioDeviceModule with NO-DUCKING audio attributes.
-            // USAGE_GAME = OS treats us as a game sound → no ducking.
             adm = AudioDeviceModuleBuilder.build(context, null)
-
-            // CRITICAL NO-DUCKING TRICK:
-            // 1. Enable loudspeaker (bottom speaker, not earpiece)
-            // 2. Force MODE_NORMAL (NOT MODE_IN_COMMUNICATION)
-            // This prevents Android from ducking game audio.
             AudioDeviceModuleBuilder.enableLoudspeakerAndNoDucking(context)
 
-            // Create the factory.
             factory = PeerConnectionFactory.builder()
                 .setAudioDeviceModule(adm!!)
                 .createPeerConnectionFactory()
 
-            // Create audio source + track.
             audioSource = factory!!.createAudioSource(MediaConstraints())
             audioTrack = factory!!.createAudioTrack("ARDAMS", audioSource)
             audioTrack!!.setEnabled(true)
 
-            // Create peer connection with STUN + TURN servers.
-            // TURN is REQUIRED for mobile networks — carriers use symmetric
-            // NAT which STUN can't traverse. TURN relays the voice through
-            // a server when P2P fails.
-            //
-            // OpenRelay provides free TURN (100GB/month free):
-            // https://www.metered.ca/openrelay/
-            val iceServers = listOf(
-                // Google STUN (free, no auth)
-                PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
-                PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
-                // OpenRelay TURN (free, 100GB/month) — relays voice when P2P fails
-                PeerConnection.IceServer.builder(
-                    "turn:openrelay.metered.ca:80"
-                ).setUsername("openrelayproject").setPassword(
-                    "openrelayproject"
-                ).createIceServer(),
-                PeerConnection.IceServer.builder(
-                    "turn:openrelay.metered.ca:443"
-                ).setUsername("openrelayproject").setPassword(
-                    "openrelayproject"
-                ).createIceServer(),
-                PeerConnection.IceServer.builder(
-                    "turn:openrelay.metered.ca:443?transport=tcp"
-                ).setUsername("openrelayproject").setPassword(
-                    "openrelayproject"
-                ).createIceServer()
-            )
-            val config = PeerConnection.RTCConfiguration(iceServers).apply {
-                sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
-                continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
-                iceTransportsType = PeerConnection.IceTransportsType.ALL
-                bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
-                rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
-                // Enable ICE candidate gathering on all interfaces
-                // (needed for some mobile networks)
-                keyType = PeerConnection.KeyType.ECDSA
-            }
-
-            peerConnection = factory!!.createPeerConnection(config, object : PeerConnection.Observer {
-                override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
-
-                override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
-                    Log.i(TAG, "ICE state: $state")
-                    state?.let { listener.onIceConnectionStateChange(it) }
-                }
-
-                override fun onIceConnectionReceivingChange(receiving: Boolean) {}
-
-                override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {
-                    Log.i(TAG, "ICE gathering: $state")
-                }
-
-                override fun onIceCandidate(candidate: IceCandidate?) {
-                    candidate?.let { listener.onIceCandidate(it) }
-                }
-
-                override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
-
-                override fun onAddStream(stream: org.webrtc.MediaStream?) {}
-
-                override fun onRemoveStream(stream: org.webrtc.MediaStream?) {}
-
-                override fun onDataChannel(dc: org.webrtc.DataChannel?) {}
-
-                override fun onRenegotiationNeeded() {}
-
-                override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out org.webrtc.MediaStream>?) {
-                    // Remote audio track arrived — WebRTC auto-renders it to the speaker.
-                    Log.i(TAG, "Remote track added")
-                }
-            })
-
-            if (peerConnection == null) {
-                listener.onError("createPeerConnection returned null")
-                return false
-            }
-
-            // Add our mic audio track to the peer connection.
-            peerConnection!!.addTrack(audioTrack)
-
-            Log.i(TAG, "WebRtcClient initialized")
+            Log.i(TAG, "WebRtcClient initialized (myPeerId=$myPeerId)")
             true
         } catch (t: Throwable) {
             Log.e(TAG, "init failed", t)
-            listener.onError("init: ${t.message}")
             false
         }
     }
 
-    /** Create an SDP offer (caller side). */
-    fun createOffer() {
-        Log.i(TAG, "Creating offer...")
-        peerConnection?.createOffer(object : SdpObserver {
+    /**
+     * Create a peer connection for a remote peer (if not already exists).
+     * Called when we receive a Hello from a new peer.
+     * Returns true if this is a new peer (and we should create an offer
+     * if we're the caller for this pair).
+     */
+    fun addPeer(remotePeerId: String): Boolean {
+        if (peers.containsKey(remotePeerId)) return false
+
+        Log.i(TAG, "Adding peer: $remotePeerId")
+
+        val iceServers = listOf(
+            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
+            // OpenRelay free TURN — relays voice when P2P fails (hotspot, symmetric NAT)
+            PeerConnection.IceServer.builder("turn:openrelay.metered.ca:80")
+                .setUsername("openrelayproject").setPassword("openrelayproject").createIceServer(),
+            PeerConnection.IceServer.builder("turn:openrelay.metered.ca:443")
+                .setUsername("openrelayproject").setPassword("openrelayproject").createIceServer(),
+            PeerConnection.IceServer.builder("turn:openrelay.metered.ca:443?transport=tcp")
+                .setUsername("openrelayproject").setPassword("openrelayproject").createIceServer()
+        )
+        val config = PeerConnection.RTCConfiguration(iceServers).apply {
+            sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
+            continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
+            iceTransportsType = PeerConnection.IceTransportsType.ALL
+            bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
+            rtcpMuxPolicy = PeerConnection.RtpMuxPolicy.REQUIRE
+            keyType = PeerConnection.KeyType.ECDSA
+        }
+
+        val connection = factory!!.createPeerConnection(config, object : PeerConnection.Observer {
+            override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
+
+            override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
+                Log.i(TAG, "[$remotePeerId] ICE state: $state")
+                state?.let { listener.onPeerIceStateChanged(remotePeerId, it) }
+            }
+
+            override fun onIceConnectionReceivingChange(receiving: Boolean) {}
+            override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
+
+            override fun onIceCandidate(candidate: IceCandidate?) {
+                candidate?.let { listener.onIceCandidateForPeer(remotePeerId, it) }
+            }
+
+            override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
+            override fun onAddStream(stream: org.webrtc.MediaStream?) {}
+            override fun onRemoveStream(stream: org.webrtc.MediaStream?) {}
+            override fun onDataChannel(dc: org.webrtc.DataChannel?) {}
+            override fun onRenegotiationNeeded() {}
+
+            override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out org.webrtc.MediaStream>?) {
+                Log.i(TAG, "[$remotePeerId] Remote track added")
+            }
+        }) ?: run {
+            listener.onPeerError(remotePeerId, "createPeerConnection returned null")
+            return false
+        }
+
+        // Add our mic audio track to this peer connection.
+        connection.addTrack(audioTrack)
+
+        peers[remotePeerId] = PeerEntry(remotePeerId, connection)
+        return true
+    }
+
+    /**
+     * Perfect negotiation: caller (lower peer ID) creates the offer.
+     */
+    fun maybeCreateOffer(remotePeerId: String) {
+        val entry = peers[remotePeerId] ?: return
+        // Lower peer ID = caller
+        if (myPeerId >= remotePeerId) return // we're the callee, wait for offer
+        if (entry.makingOffer) return // already making an offer
+
+        entry.makingOffer = true
+        Log.i(TAG, "[$remotePeerId] Creating offer (we are caller)")
+        entry.connection.createOffer(object : SdpObserver {
             override fun onCreateSuccess(sdp: SessionDescription?) {
                 val desc = sdp ?: return
-                peerConnection?.setLocalDescription(object : SdpObserver {
-                    override fun onSetSuccess() {
-                        Log.i(TAG, "Local description (offer) set")
-                    }
+                entry.connection.setLocalDescription(object : SdpObserver {
+                    override fun onSetSuccess() { Log.i(TAG, "[$remotePeerId] Local offer set") }
                     override fun onCreateSuccess(p0: SessionDescription?) {}
                     override fun onCreateFailure(p0: String?) {}
-                    override fun onSetFailure(p0: String?) {
-                        Log.e(TAG, "setLocalDescription failed: $p0")
-                    }
+                    override fun onSetFailure(p0: String?) { Log.e(TAG, "[$remotePeerId] setLocalOffer failed: $p0") }
                 }, desc)
-                listener.onOfferReady(desc.description)
+                entry.makingOffer = false
+                listener.onOfferReadyForPeer(remotePeerId, desc.description)
             }
             override fun onSetSuccess() {}
             override fun onCreateFailure(error: String?) {
-                listener.onError("createOffer: $error")
+                entry.makingOffer = false
+                listener.onPeerError(remotePeerId, "createOffer: $error")
             }
             override fun onSetFailure(error: String?) {}
         }, MediaConstraints())
     }
 
-    /** Create an SDP answer (callee side, after receiving an offer). */
-    fun createAnswer() {
-        Log.i(TAG, "Creating answer...")
-        peerConnection?.createAnswer(object : SdpObserver {
-            override fun onCreateSuccess(sdp: SessionDescription?) {
-                val desc = sdp ?: return
-                peerConnection?.setLocalDescription(object : SdpObserver {
-                    override fun onSetSuccess() {
-                        Log.i(TAG, "Local description (answer) set")
-                    }
-                    override fun onCreateSuccess(p0: SessionDescription?) {}
-                    override fun onCreateFailure(p0: String?) {}
-                    override fun onSetFailure(p0: String?) {
-                        Log.e(TAG, "setLocalDescription failed: $p0")
-                    }
-                }, desc)
-                listener.onAnswerReady(desc.description)
-            }
-            override fun onSetSuccess() {}
-            override fun onCreateFailure(error: String?) {
-                listener.onError("createAnswer: $error")
-            }
-            override fun onSetFailure(error: String?) {}
-        }, MediaConstraints())
-    }
+    /**
+     * Handle an incoming offer from a remote peer (perfect negotiation).
+     */
+    fun handleRemoteOffer(remotePeerId: String, sdp: String) {
+        val entry = peers[remotePeerId] ?: return
+        val offerCollision = entry.makingOffer || entry.connection.signalingState() == PeerConnection.SignalingState.HAVE_LOCAL_OFFER
+        val polite = myPeerId > remotePeerId // callee is polite
 
-    /** Rollback the local offer (for perfect negotiation glare handling). */
-    fun rollbackOffer() {
-        Log.i(TAG, "Rolling back local offer (glare resolution)")
-        try {
-            // Create a rollback SDP (empty description with ROLLBACK type)
-            peerConnection?.setLocalDescription(object : SdpObserver {
-                override fun onSetSuccess() {
-                    Log.i(TAG, "Rollback successful")
-                }
+        entry.ignoreOffer = !polite && offerCollision
+        if (entry.ignoreOffer) {
+            Log.i(TAG, "[$remotePeerId] Ignoring offer (impolite glare)")
+            return
+        }
+
+        if (offerCollision) {
+            Log.i(TAG, "[$remotePeerId] Glare — rolling back our offer (polite)")
+            entry.connection.setLocalDescription(object : SdpObserver {
+                override fun onSetSuccess() { Log.i(TAG, "[$remotePeerId] Rollback OK") }
                 override fun onCreateSuccess(p0: SessionDescription?) {}
                 override fun onCreateFailure(p0: String?) {}
-                override fun onSetFailure(p0: String?) {
-                    Log.e(TAG, "Rollback failed: $p0")
-                }
+                override fun onSetFailure(p0: String?) { Log.e(TAG, "[$remotePeerId] Rollback failed: $p0") }
             }, SessionDescription(SessionDescription.Type.ROLLBACK, ""))
-        } catch (t: Throwable) {
-            Log.e(TAG, "Rollback exception", t)
         }
-    }
 
-    /** Get the current signaling state as a string. */
-    fun signalingState(): String {
-        return peerConnection?.signalingState()?.name?.lowercase() ?: "closed"
-    }
-
-    /** Set the remote SDP (offer or answer). Flushes buffered ICE candidates. */
-    fun setRemoteDescription(type: SessionDescription.Type, sdp: String) {
-        val desc = SessionDescription(type, sdp)
-        peerConnection?.setRemoteDescription(object : SdpObserver {
+        entry.connection.setRemoteDescription(object : SdpObserver {
             override fun onSetSuccess() {
-                Log.i(TAG, "Remote SDP set (${type})")
-                remoteSdpSet = true
-                // Flush any buffered ICE candidates.
-                synchronized(pendingIceCandidates) {
-                    pendingIceCandidates.forEach { peerConnection?.addIceCandidate(it, SimpleIceObserver()) }
-                    pendingIceCandidates.clear()
-                }
+                Log.i(TAG, "[$remotePeerId] Remote offer set")
+                entry.remoteSdpSet = true
+                flushPendingIce(remotePeerId)
+                // Create answer
+                entry.connection.createAnswer(object : SdpObserver {
+                    override fun onCreateSuccess(sdp: SessionDescription?) {
+                        val desc = sdp ?: return
+                        entry.connection.setLocalDescription(object : SdpObserver {
+                            override fun onSetSuccess() { Log.i(TAG, "[$remotePeerId] Local answer set") }
+                            override fun onCreateSuccess(p0: SessionDescription?) {}
+                            override fun onCreateFailure(p0: String?) {}
+                            override fun onSetFailure(p0: String?) { Log.e(TAG, "[$remotePeerId] setLocalAnswer failed: $p0") }
+                        }, desc)
+                        listener.onAnswerReadyForPeer(remotePeerId, desc.description)
+                    }
+                    override fun onSetSuccess() {}
+                    override fun onCreateFailure(error: String?) {
+                        listener.onPeerError(remotePeerId, "createAnswer: $error")
+                    }
+                    override fun onSetFailure(error: String?) {}
+                }, MediaConstraints())
             }
             override fun onCreateSuccess(p0: SessionDescription?) {}
             override fun onCreateFailure(p0: String?) {}
             override fun onSetFailure(error: String?) {
-                listener.onError("setRemoteDescription: $error")
+                listener.onPeerError(remotePeerId, "setRemoteOffer: $error")
             }
-        }, desc)
+        }, SessionDescription(SessionDescription.Type.OFFER, sdp))
     }
 
-    /** Add a remote ICE candidate. Buffers if remote SDP not yet set. */
-    fun addIceCandidate(candidate: IceCandidate) {
-        if (remoteSdpSet) {
-            peerConnection?.addIceCandidate(candidate, SimpleIceObserver())
-        } else {
-            synchronized(pendingIceCandidates) {
-                pendingIceCandidates.add(candidate)
+    /**
+     * Handle an incoming answer from a remote peer.
+     */
+    fun handleRemoteAnswer(remotePeerId: String, sdp: String) {
+        val entry = peers[remotePeerId] ?: return
+        if (entry.ignoreOffer) {
+            Log.i(TAG, "[$remotePeerId] Ignoring answer (glare)")
+            return
+        }
+        entry.connection.setRemoteDescription(object : SdpObserver {
+            override fun onSetSuccess() {
+                Log.i(TAG, "[$remotePeerId] Remote answer set")
+                entry.remoteSdpSet = true
+                flushPendingIce(remotePeerId)
             }
-            Log.i(TAG, "Buffered ICE candidate (remote SDP not set yet)")
+            override fun onCreateSuccess(p0: SessionDescription?) {}
+            override fun onCreateFailure(p0: String?) {}
+            override fun onSetFailure(error: String?) {
+                listener.onPeerError(remotePeerId, "setRemoteAnswer: $error")
+            }
+        }, SessionDescription(SessionDescription.Type.ANSWER, sdp))
+    }
+
+    /**
+     * Add a remote ICE candidate for a specific peer.
+     */
+    fun addIceCandidate(remotePeerId: String, candidate: IceCandidate) {
+        val entry = peers[remotePeerId] ?: return
+        if (entry.remoteSdpSet) {
+            entry.connection.addIceCandidate(candidate, object : org.webrtc.AddIceObserver {
+                override fun onAddSuccess() {}
+                override fun onAddFailure(error: String?) { Log.e(TAG, "[$remotePeerId] addIce failed: $error") }
+            })
+        } else {
+            synchronized(entry.pendingIceCandidates) {
+                entry.pendingIceCandidates.add(candidate)
+            }
+            Log.i(TAG, "[$remotePeerId] Buffered ICE candidate")
         }
     }
 
-    /** Mute/unmute the local mic. */
+    private fun flushPendingIce(remotePeerId: String) {
+        val entry = peers[remotePeerId] ?: return
+        synchronized(entry.pendingIceCandidates) {
+            entry.pendingIceCandidates.forEach { cand ->
+                entry.connection.addIceCandidate(cand, object : org.webrtc.AddIceObserver {
+                    override fun onAddSuccess() {}
+                    override fun onAddFailure(error: String?) {}
+                })
+            }
+            entry.pendingIceCandidates.clear()
+        }
+    }
+
+    /** Remove a peer (when they leave). */
+    fun removePeer(remotePeerId: String) {
+        val entry = peers.remove(remotePeerId) ?: return
+        try { entry.connection.dispose() } catch (_: Throwable) {}
+        Log.i(TAG, "[$remotePeerId] Removed")
+    }
+
+    /** Mute/unmute the local mic (affects all peer connections). */
     fun setMuted(muted: Boolean) {
         audioTrack?.setEnabled(!muted)
     }
 
+    /** Get all connected peer IDs. */
+    fun getConnectedPeers(): Set<String> = peers.keys
+
     /** Tear down everything. */
     fun release() {
+        peers.values.forEach { entry ->
+            try { entry.connection.dispose() } catch (_: Throwable) {}
+        }
+        peers.clear()
         try { audioTrack?.dispose() } catch (_: Throwable) {}
         try { audioSource?.dispose() } catch (_: Throwable) {}
-        try { peerConnection?.dispose() } catch (_: Throwable) {}
         try { factory?.dispose() } catch (_: Throwable) {}
         try { adm?.release() } catch (_: Throwable) {}
         audioTrack = null
         audioSource = null
-        peerConnection = null
         factory = null
         adm = null
-        remoteSdpSet = false
-        synchronized(pendingIceCandidates) { pendingIceCandidates.clear() }
         Log.i(TAG, "WebRtcClient released")
     }
 
     companion object {
         private const val TAG = "MicUp/WebRtc"
     }
-}
-
-class SimpleSdpObserver : SdpObserver {
-    override fun onCreateSuccess(p0: SessionDescription?) {}
-    override fun onSetSuccess() {}
-    override fun onCreateFailure(p0: String?) {}
-    override fun onSetFailure(p0: String?) {}
-}
-
-class SimpleIceObserver : org.webrtc.AddIceObserver {
-    override fun onAddSuccess() {}
-    override fun onAddFailure(error: String?) {}
 }

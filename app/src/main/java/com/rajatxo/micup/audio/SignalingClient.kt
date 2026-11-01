@@ -50,6 +50,10 @@ class SignalingClient(
                     val type = json.optString("type")
                     // Handle both "from" (our client) and "id" (server auto-announce)
                     val from = json.optString("from", json.optString("id", ""))
+                    // "to" field — for multi-peer routing. If present, only
+                    // process if it matches our peer ID. If absent, broadcast
+                    // (old behavior, for backward compat).
+                    val to = json.optString("to", "")
                     val message = when (type) {
                         "hello", "Hello" -> SignalingMessage.Hello(from, json.optString("name", from))
                         "offer", "Offer" -> SignalingMessage.Offer(from, json.optString("sdp", json.optString("description", "")))
@@ -126,16 +130,17 @@ sealed class SignalingMessage {
         override fun toJson() = JSONObject().put("type", "hello").put("from", from).put("name", name)
     }
 
-    data class Offer(val from: String, val sdp: String) : SignalingMessage() {
-        override fun toJson() = JSONObject().put("type", "offer").put("from", from).put("sdp", sdp)
+    data class Offer(val from: String, val to: String, val sdp: String) : SignalingMessage() {
+        override fun toJson() = JSONObject().put("type", "offer").put("from", from).put("to", to).put("sdp", sdp)
     }
 
-    data class Answer(val from: String, val sdp: String) : SignalingMessage() {
-        override fun toJson() = JSONObject().put("type", "answer").put("from", from).put("sdp", sdp)
+    data class Answer(val from: String, val to: String, val sdp: String) : SignalingMessage() {
+        override fun toJson() = JSONObject().put("type", "answer").put("from", from).put("to", to).put("sdp", sdp)
     }
 
     data class Ice(
         val from: String,
+        val to: String,
         val sdp: String,
         val sdpMid: String?,
         val sdpMLineIndex: Int
@@ -148,6 +153,7 @@ sealed class SignalingMessage {
             return JSONObject()
                 .put("type", "ice")
                 .put("from", from)
+                .put("to", to)
                 .put("candidate", candidate)
         }
     }
