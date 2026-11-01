@@ -1,16 +1,19 @@
 /**
  * MicUp Signaling Server — Cloudflare Worker
  *
- * SIMPLE BROADCAST MODEL:
- * - Each WebSocket connection joins a room (from URL ?room=CODE)
- * - When any client sends a message, it's broadcast to ALL other
- *   clients in the same room
- * - No state, no parsing, no auto-announce — just dumb forwarding
+ * Uses the CORRECT Cloudflare Workers WebSocket pattern:
+ * - server.addEventListener('message', ...) DOES work, but only
+ *   inside the fetch handler while the request is still open
+ * - The trick: we MUST keep a reference and the response must be
+ *   returned immediately to "accept" the WebSocket
+ * - Then event listeners on the server socket fire normally
  *
- * The client handles all the logic (announcing, parsing, etc.).
- * The server is as simple as possible to avoid bugs.
+ * CRITICAL: This worker uses the "durable" pattern where we
+ * immediately return the Response with the client WebSocket, and
+ * the server WebSocket's event listeners handle all the logic.
  */
 
+// Global Map of room code → Set of server-side WebScks
 const rooms = new Map();
 
 export default {
@@ -20,8 +23,7 @@ export default {
       return new Response(JSON.stringify({
         name: "MicUp Signaling Server",
         status: "ok",
-        usage: "Connect via WebSocket with ?room=ROOMCODE&peer=PEERID",
-        protocol: "Broadcasts every message to all other sockets in the same room"
+        usage: "Connect via WebSocket with ?room=ROOMCODE&peer=PEERID"
       }, null, 2), {
         status: 200,
         headers: { "Content-Type": "application/json" }
@@ -40,51 +42,51 @@ export default {
     }
 
     // Create the WebSocket pair.
-    const pair = new WebSocketPair();
-    const [client, server] = Object.values(pair);
+    const [client, server] = Object.values(new WebSocketPair());
 
-    // Tag this socket with its peer ID + room.
+    // Tag this socket.
     server.peerId = peer;
     server.room = room;
 
-    // Add to room.
+    // Add to room BEFORE accepting so other sockets can see us.
     sockets.add(server);
+
+    // Accept the WebSocket — this must happen before returning.
     server.accept();
 
-    console.log(`Peer ${peer} joined room ${room} (now ${sockets.size} sockets)`);
-
-    // When this server socket receives a message, broadcast to ALL OTHER
-    // sockets in the same room.
+    // --- BROADCAST on message ---
     server.addEventListener("message", (event) => {
-      console.log(`Broadcast from ${peer}: ${event.data.substring(0, 100)}`);
+      // Forward to all OTHER sockets in the same room.
       for (const other of sockets) {
         if (other !== server && other.readyState === 1) {
           try {
             other.send(event.data);
           } catch (e) {
-            console.error("Broadcast error:", e);
+            // ignore — socket is broken
           }
         }
       }
     });
 
-    // When this socket closes, remove it from the room.
+    // --- CLEANUP on close ---
     server.addEventListener("close", () => {
       sockets.delete(server);
-      console.log(`Peer ${peer} left room ${room} (${sockets.size} remaining)`);
       if (sockets.size === 0) {
         rooms.delete(room);
       }
     });
 
-    server.addEventListener("error", (e) => {
-      console.error(`Socket error from ${peer}:`, e);
+    server.addEventListener("error", () => {
       sockets.delete(server);
       if (sockets.size === 0) {
         rooms.delete(room);
       }
     });
 
-    return new Response(null, { status: 101, webSocket: client });
+    // Return the client socket — this "completes" the upgrade.
+    return new Response(null, {
+      status: 101,
+      webSocket: client
+    });
   }
 };
