@@ -278,8 +278,13 @@ private fun VoiceChatScreen() {
                                     }
                                 }
                                 override fun onDisconnected(reason: String) {
-                                    status = "Disconnected: $reason"
-                                    isConnected = false
+                                    // Don't immediately fail — show the reason
+                                    // and let the user retry
+                                    if (iceState != "CONNECTED" && iceState != "COMPLETED") {
+                                        status = "Disconnected: $reason\nTap Retry to reconnect"
+                                        isConnected = false
+                                        isConnecting = false
+                                    }
                                 }
                                 override fun onError(error: String) {
                                     errorMessage = error
@@ -343,6 +348,35 @@ private fun VoiceChatScreen() {
                 }
 
                 Spacer(Modifier.height(32.dp))
+
+                // Retry button (shown when disconnected/failed)
+                if (status.startsWith("Disconnected") || status == "FAILED") {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFFFF6B6B))
+                            .clickable {
+                                // Full reconnect — release old, start fresh
+                                try { webRtc?.release() } catch (_: Throwable) {}
+                                try { signaling?.disconnect() } catch (_: Throwable) {}
+                                webRtc = null
+                                signaling = null
+                                isConnected = false
+                                isConnecting = false
+                                iceState = ""
+                                errorMessage = null
+                                hasCreatedOffer = false
+                                status = "Enter a 5-char room code"
+                            }
+                            .padding(horizontal = 24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Retry", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    }
+                    Spacer(Modifier.height(16.dp))
+                }
 
                 // Mute + Leave buttons
                 Row(

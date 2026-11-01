@@ -48,21 +48,23 @@ class SignalingClient(
                 try {
                     val json = JSONObject(text)
                     val type = json.optString("type")
-                    val from = json.optString("from", "")
+                    // Handle both "from" (our client) and "id" (server auto-announce)
+                    val from = json.optString("from", json.optString("id", ""))
                     val message = when (type) {
-                        "hello" -> SignalingMessage.Hello(from, json.optString("name", "Player"))
-                        "offer" -> SignalingMessage.Offer(from, json.optString("sdp"))
-                        "answer" -> SignalingMessage.Answer(from, json.optString("sdp"))
-                        "ice" -> {
+                        "hello", "Hello" -> SignalingMessage.Hello(from, json.optString("name", from))
+                        "offer", "Offer" -> SignalingMessage.Offer(from, json.optString("sdp", json.optString("description", "")))
+                        "answer", "Answer" -> SignalingMessage.Answer(from, json.optString("sdp", json.optString("description", "")))
+                        "ice", "Ice", "ice-candidate" -> {
                             val cand = json.optJSONObject("candidate")
+                                ?: json.optJSONObject("iceCandidate")
                             SignalingMessage.Ice(
                                 from,
-                                cand?.optString("sdp") ?: "",
-                                cand?.optString("sdpMid"),
+                                cand?.optString("sdp", cand.optString("candidate", "")) ?: "",
+                                cand?.optString("sdpMid", cand.optString("sdpMid", null)),
                                 cand?.optInt("sdpMLineIndex", 0) ?: 0
                             )
                         }
-                        "bye" -> SignalingMessage.Bye(from)
+                        "bye", "Bye" -> SignalingMessage.Bye(from)
                         else -> null
                 }
                     if (message != null) {
@@ -83,8 +85,17 @@ class SignalingClient(
             }
 
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
-                Log.e(TAG, "WebSocket failure", t)
-                listener.onError(t.message ?: "Unknown error")
+                Log.e(TAG, "WebSocket failure: ${t.message}", t)
+                // Don't immediately call onError — the WebSocket might have
+                // closed normally but OkHttp reports it as a failure.
+                // Let the listener decide what to do.
+                val msg = t.message ?: "Unknown WebSocket error"
+                if (msg.contains("closed") || msg.contains("1000")) {
+                    // Normal close — treat as disconnection, not error
+                    listener.onDisconnected("Connection closed")
+                } else {
+                    listener.onError(msg)
+                }
             }
         })
     }
