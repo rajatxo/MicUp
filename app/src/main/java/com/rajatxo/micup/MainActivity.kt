@@ -2,6 +2,9 @@ package com.rajatxo.micup
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -19,7 +22,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -30,6 +32,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -44,20 +47,22 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
-import com.rajatxo.micup.audio.AudioDeviceModuleBuilder
-import org.webrtc.PeerConnectionFactory
 import kotlin.math.sqrt
 
 /**
- * Step 2 — Mic capture test with live volume meter.
+ * Step 2 (revised) — Mic capture test using Android's NATIVE AudioRecord.
  *
- * Proves:
- * 1. RECORD_AUDIO permission is granted
- * 2. WebRTC AudioDeviceModule captures from the mic
- * 3. We can see the volume changing in real time
- * 4. No crash when leaving the screen
+ * PREVIOUS APPROACH FAILED: WebRTC's AudioDeviceModule is lazy — it
+ * doesn't start capturing until a PeerConnection pulls from it. So
+ * the SamplesReadyCallback never fired and the bar stayed at 0%.
  *
- * Visual: a coral volume bar that grows/shrinks as you speak.
+ * NEW APPROACH: Use Android's native AudioRecord API directly. This
+ * proves the mic hardware + permission work at all, bypassing WebRTC
+ * entirely. If this works → mic is fine, we move to Step 3. If this
+ * fails → Realme is blocking mic access at the OS level.
+ *
+ * Visual: a coral volume bar that grows/shrinks as you speak, with
+ * a live sample counter so we can verify capture is actually happening.
  */
 class MainActivity : ComponentActivity() {
 
@@ -89,7 +94,6 @@ private fun MicTestScreen() {
         ActivityResultContracts.RequestPermission()
     ) { granted -> hasMicPermission = granted }
 
-    // Request mic permission on first launch.
     LaunchedEffect(Unit) {
         if (!hasMicPermission) {
             permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
@@ -116,7 +120,7 @@ private fun MicTestScreen() {
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                text = "Step 2 of 10 — Mic Capture Test",
+                text = "Step 2 of 10 — Mic Capture Test (native)",
                 color = Color(0xFF888888),
                 fontSize = 13.sp
             )
@@ -130,7 +134,7 @@ private fun MicTestScreen() {
                     })
                 }
                 else -> {
-                    VolumeMeterCard(appContext)
+                    NativeVolumeMeterCard(appContext)
                 }
             }
         }
@@ -177,92 +181,81 @@ private fun PermissionCard(onRequest: () -> Unit) {
 }
 
 /**
- * The volume meter — captures audio from the mic via WebRTC and shows
- * the current volume as a growing/shrinking bar.
+ * Volume meter using Android's NATIVE AudioRecord.
  *
- * CRITICAL cleanup: the AudioDeviceModule is released in DisposableEffect
- * when the composable leaves the screen. This prevents mic leaks and
- * crashes on screen exit.
+ * This bypasses WebRTC entirely. If this works → mic hardware is fine
+ * and we move to Step 3 (echo test). If this fails → OS-level mic block.
+ *
+ * Uses 16-bit PCM at 48kHz mono — standard voice chat config.
  */
 @Composable
-private fun VolumeMeterCard(appContext: android.content.Context) {
-    // 0.0 = silent, 1.0 = loud
+private fun NativeVolumeMeterCard(appContext: android.content.Context) {
     var volume by remember { mutableFloatStateOf(0f) }
-    var status by remember { mutableStateOf("Initializing WebRTC...") }
+    var status by remember { mutableStateOf("Starting mic...") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
-
-    // Holds the AudioDeviceModule so we can release it on dispose.
-    // Typed as Any? to avoid Kotlin's metadata-resolution issue with
-    // JavaAudioDeviceModule — we use the Java helper for all operations.
-    var adm by remember { mutableStateOf<Any?>(null) }
-
-    // Count of samples received — proves the callback is firing.
-    var sampleCount by remember { mutableStateOf(0L) }
-    var lastSampleTime by remember { mutableStateOf(0L) }
+    var sampleCount by remember { mutableLongStateOf(0L) }
+    var lastSampleAgeMs by remember { mutableLongStateOf(-1L) }
 
     DisposableEffect(Unit) {
-        // Build a separate thread for WebRTC work so we don't block the UI.
+        var audioRecord: AudioRecord? = null
+        var isRunning = true
+
         val thread = Thread {
             try {
-                status = "Initializing WebRTC..."
-                PeerConnectionFactory.initialize(
-                    PeerConnectionFactory.InitializationOptions
-                        .builder(appContext)
-                        .setEnableInternalTracer(false)
-                        .createInitializationOptions()
+                val sampleRate = 48_000
+                val channelConfig = AudioFormat.CHANNEL_IN_MONO
+                val audioFormat = AudioFormat.ENCODING_PCM_16BIT
+
+                val minBuf = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
+                val bufferSize = maxOf(minBuf * 2, 1920)
+                status = "Buffer size: $bufferSize bytes"
+
+                status = "Creating AudioRecord..."
+                @Suppress("MissingPermission")
+                val record = AudioRecord(
+                    MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                    sampleRate,
+                    channelConfig,
+                    audioFormat,
+                    bufferSize
                 )
 
-                status = "Building AudioDeviceModule..."
-                // Build the ADM via the Java helper — Kotlin can't resolve
-                // JavaAudioDeviceModule directly due to a metadata issue
-                // with stream-webrtc-android 1.3.9.
-                val admInstance = AudioDeviceModuleBuilder.build(appContext) { audioSamples ->
-                    // Increment counter + record timestamp — proves callback fires.
-                    sampleCount += 1
-                    lastSampleTime = System.currentTimeMillis()
-
-                    // audioSamples.data is a byte[] of 16-bit PCM audio.
-                    val data = audioSamples.data
-                    if (data.size > 1) {
-                        var sum = 0.0
-                        var i = 0
-                        while (i + 1 < data.size) {
-                            val b1 = data[i].toInt() and 0xFF
-                            val b2 = data[i + 1].toInt() and 0xFF
-                            val sample = (b2 shl 8) or b1
-                            val signed = if (sample > 32767) sample - 65536 else sample
-                            sum += signed.toDouble() * signed.toDouble()
-                            i += 4
-                        }
-                        val count = (data.size / 4)
-                        if (count > 0) {
-                            val rms = sqrt(sum / count)
-                            val normalized = (rms / 32768.0).toFloat()
-                            val boosted = (normalized * 4f).coerceIn(0f, 1f)
-                            volume = boosted
-                        }
-                    }
+                if (record.state != AudioRecord.STATE_INITIALIZED) {
+                    errorMessage = "AudioRecord failed to initialize (state=${record.state})"
+                    status = "FAILED"
+                    return@Thread
                 }
 
-                adm = admInstance
+                status = "Starting recording..."
+                record.startRecording()
+                audioRecord = record
 
-                status = "Building PeerConnectionFactory..."
-                val factory = PeerConnectionFactory.builder()
-                    .setAudioDeviceModule(admInstance)
-                    .createPeerConnectionFactory()
-
-                // CRITICAL: PeerConnectionFactory alone doesn't start mic capture.
-                // WebRTC only pulls from the mic when an AudioSource + AudioTrack
-                // is created AND enabled. Without this, SamplesReadyCallback
-                // never fires — which is exactly what the user is seeing (bar
-                // doesn't move).
-                status = "Creating audio source + track..."
-                val constraints = org.webrtc.MediaConstraints()
-                val audioSource = factory.createAudioSource(constraints)
-                val audioTrack = factory.createAudioTrack("ARDAMS", audioSource)
-                audioTrack.setEnabled(true)
+                if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                    errorMessage = "AudioRecord didn't start (state=${record.recordingState})"
+                    status = "FAILED"
+                    return@Thread
+                }
 
                 status = "Speak into your mic!"
+
+                val buffer = ShortArray(bufferSize / 2)
+                while (isRunning) {
+                    val read = record.read(buffer, 0, buffer.size)
+                    if (read > 0) {
+                        sampleCount += 1
+                        lastSampleAgeMs = 0
+
+                        var sum = 0.0
+                        for (i in 0 until read) {
+                            val s = buffer[i].toDouble()
+                            sum += s * s
+                        }
+                        val rms = sqrt(sum / read)
+                        val normalized = (rms / 32768.0).toFloat()
+                        val boosted = (normalized * 5f).coerceIn(0f, 1f)
+                        volume = boosted
+                    }
+                }
             } catch (t: Throwable) {
                 errorMessage = "${t::class.java.simpleName}: ${t.message}"
                 status = "FAILED"
@@ -270,11 +263,22 @@ private fun VolumeMeterCard(appContext: android.content.Context) {
         }
         thread.start()
 
+        // Background ticker to update "last sample age" display.
+        val ticker = Thread {
+            while (isRunning) {
+                try { Thread.sleep(200) } catch (_: Throwable) {}
+                if (lastSampleAgeMs >= 0) {
+                    lastSampleAgeMs += 200
+                }
+            }
+        }
+        ticker.start()
+
         onDispose {
-            // CRITICAL: release the mic when leaving the screen.
-            // Without this, the mic stays on and other apps can't use it.
-            try { AudioDeviceModuleBuilder.release(adm) } catch (_: Throwable) {}
-            adm = null
+            isRunning = false
+            try { audioRecord?.stop() } catch (_: Throwable) {}
+            try { audioRecord?.release() } catch (_: Throwable) {}
+            audioRecord = null
         }
     }
 
@@ -312,7 +316,6 @@ private fun VolumeMeterCard(appContext: android.content.Context) {
         if (status == "Speak into your mic!") {
             Spacer(Modifier.height(24.dp))
 
-            // Volume bar — coral, grows with mic input.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -320,16 +323,15 @@ private fun VolumeMeterCard(appContext: android.content.Context) {
                     .clip(RoundedCornerShape(16.dp))
                     .background(Color(0x14FFFFFF))
             ) {
-                // The growing bar — height scales with volume.
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height((volume * 120f).dp)
                         .clip(RoundedCornerShape(16.dp))
                         .background(
-                            if (volume > 0.7f) Color(0xFF4ADE80)  // green = loud
-                            else if (volume > 0.3f) Color(0xFFFF6B6B)  // coral = normal
-                            else Color(0x33FF6B6B)  // dim = quiet
+                            if (volume > 0.7f) Color(0xFF4ADE80)
+                            else if (volume > 0.3f) Color(0xFFFF6B6B)
+                            else Color(0x33FF6B6B)
                         )
                         .align(Alignment.BottomCenter)
                 )
@@ -337,7 +339,6 @@ private fun VolumeMeterCard(appContext: android.content.Context) {
 
             Spacer(Modifier.height(16.dp))
 
-            // Volume percentage text.
             Text(
                 text = "${(volume * 100).toInt()}%",
                 color = Color(0xFFCCCCCC),
@@ -348,13 +349,14 @@ private fun VolumeMeterCard(appContext: android.content.Context) {
 
             Spacer(Modifier.height(8.dp))
 
-            // DIAGNOSTIC: shows if SamplesReadyCallback is firing.
-            // If sampleCount stays 0 → callback never fires (mic not capturing)
-            // If sampleCount increases but bar stays 0 → audio is silent
-            // If sampleCount increases AND bar moves → working!
-            val ageSec = if (lastSampleTime > 0) (System.currentTimeMillis() - lastSampleTime) / 1000 else -1
+            val ageText = when {
+                lastSampleAgeMs < 0 -> "never"
+                lastSampleAgeMs == 0L -> "now"
+                lastSampleAgeMs < 1000 -> "${lastSampleAgeMs}ms ago"
+                else -> "${lastSampleAgeMs / 1000}s ago"
+            }
             Text(
-                text = "samples: $sampleCount · last: ${if (ageSec < 0) "never" else "${ageSec}s ago"}",
+                text = "samples: $sampleCount · last: $ageText",
                 color = Color(0xFF888888),
                 fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace
