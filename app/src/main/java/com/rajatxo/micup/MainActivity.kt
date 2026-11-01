@@ -213,26 +213,24 @@ private fun VolumeMeterCard(appContext: android.content.Context) {
                 // JavaAudioDeviceModule directly due to a metadata issue
                 // with stream-webrtc-android 1.3.9.
                 val admInstance = AudioDeviceModuleBuilder.build(appContext) { audioSamples ->
-                    // audioSamples.data is a ByteBuffer of 16-bit PCM.
-                    val buf = audioSamples.data
-                    buf.rewind()
-                    val limit = buf.limit()
-                    if (limit > 0) {
+                    // audioSamples.data is a byte[] of 16-bit PCM audio.
+                    // We compute RMS (root mean square) = volume.
+                    val data = audioSamples.data
+                    if (data.size > 1) {
                         var sum = 0.0
-                        // Read 16-bit samples (shorts) and sum their squares.
-                        // Skip every other sample for performance — we only
-                        // need a volume estimate, not exact RMS.
+                        // Read 16-bit samples (little-endian shorts) and sum squares.
+                        // Skip every other sample for performance.
                         var i = 0
-                        while (i + 1 < limit) {
-                            val b1 = buf.get(i).toInt() and 0xFF
-                            val b2 = buf.get(i + 1).toInt() and 0xFF
+                        while (i + 1 < data.size) {
+                            val b1 = data[i].toInt() and 0xFF
+                            val b2 = data[i + 1].toInt() and 0xFF
                             val sample = (b2 shl 8) or b1
                             // Convert to signed short
                             val signed = if (sample > 32767) sample - 65536 else sample
                             sum += signed.toDouble() * signed.toDouble()
                             i += 4  // skip every other sample
                         }
-                        val sampleCount = (limit / 4)
+                        val sampleCount = (data.size / 4)
                         if (sampleCount > 0) {
                             val rms = sqrt(sum / sampleCount)
                             // Normalize: RMS ranges 0-32768. Map to 0-1.
