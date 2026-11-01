@@ -22,8 +22,8 @@ android {
         applicationId = "com.rajatxo.micup"
         minSdk = 21
         targetSdk = 35
-        versionCode = 20400
-        versionName = "2.0.4"
+        versionCode = 20500
+        versionName = "2.0.5"
         vectorDrawables { useSupportLibrary = true }
 
         // Agora App ID — baked into the APK via BuildConfig so the
@@ -57,11 +57,12 @@ android {
 
     buildTypes {
         release {
-            // Re-enabled minify + shrinkResources to shrink the APK size.
-            // Agora's native libs are ~50MB, so without R8 the universal
-            // APK was 78MB. With R8 + resource shrinking it drops to ~40MB.
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // R8 disabled temporarily — the obfuscated Agora stack trace
+            // (s1.b.a, s1.n.a, etc.) suggests R8 might be stripping or
+            // renaming something Agora needs internally. Re-enable once
+            // voice init is confirmed working.
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

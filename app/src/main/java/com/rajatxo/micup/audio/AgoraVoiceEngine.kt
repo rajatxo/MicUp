@@ -62,53 +62,82 @@ class AgoraVoiceEngine private constructor(private val context: Context) {
         lastError = null
         return try {
             val appId = com.rajatxo.micup.BuildConfig.AGORA_APP_ID
-            Log.i(TAG, "init() — App ID: ${appId.take(8)}... (${appId.length} chars)")
+            Log.i(TAG, "=== Agora init step 1: App ID check ===")
+            Log.i(TAG, "App ID: ${appId.take(8)}... (total ${appId.length} chars)")
 
-            // Validate App ID format BEFORE calling Agora.
             if (appId.isBlank() || appId.length != 32) {
-                lastError = "App ID format invalid (got ${appId.length} chars, expected 32)"
+                lastError = "App ID format invalid (got ${appId.length} chars, expected 32). " +
+                    "Value: '$appId'"
                 Log.e(TAG, lastError!!)
                 return null
             }
+            Log.i(TAG, "✓ App ID format OK")
 
+            Log.i(TAG, "=== Agora init step 2: Check native lib loaded ===")
+            try {
+                System.loadLibrary("agora-rtc-sdk")
+                Log.i(TAG, "✓ agora-rtc-sdk native lib loaded")
+            } catch (e: UnsatisfiedLinkError) {
+                lastError = "Native lib 'agora-rtc-sdk' failed to load: ${e.message}. " +
+                    "This means the .so file for your phone's CPU architecture is missing."
+                Log.e(TAG, lastError!!, e)
+                return null
+            }
+
+            Log.i(TAG, "=== Agora init step 3: Create RtcEngineConfig ===")
             val config = RtcEngineConfig().apply {
                 mContext = context
                 mAppId = appId
                 mEventHandler = handler
             }
-            val engine = RtcEngine.create(config)
+            Log.i(TAG, "✓ Config created — mContext=$context, mAppId=${appId.take(8)}...")
 
-            // CRITICAL: RtcEngine.create() returns null if the App ID is
-            // rejected (invalid, wrong project, deleted, etc.).
+            Log.i(TAG, "=== Agora init step 4: RtcEngine.create(config) ===")
+            val engine = RtcEngine.create(config)
+            Log.i(TAG, "RtcEngine.create() returned: $engine")
+
             if (engine == null) {
-                lastError = "RtcEngine.create() returned null — App ID rejected by Agora. " +
-                    "Check the Agora console: console.agora.io → Project Management → " +
-                    "verify the App ID matches AND the auth mode is 'App ID only' (not 'App ID + Token')."
+                lastError = "RtcEngine.create() returned null. " +
+                    "Agora SDK v${getSdkVersion()} rejected the App ID. " +
+                    "Possible causes: invalid App ID, network issue, or SDK bug. " +
+                    "Try: 1) Verify App ID in console.agora.io  2) Check internet connection  3) Restart app"
                 Log.e(TAG, lastError!!)
                 return null
             }
+            Log.i(TAG, "✓ RtcEngine created successfully")
 
-            // THE MAGIC — set high-quality audio + game streaming scenario.
+            Log.i(TAG, "=== Agora init step 5: setAudioProfile ===")
             engine.setAudioProfile(
                 Constants.AUDIO_PROFILE_MUSIC_HIGH_QUALITY,
                 Constants.AUDIO_SCENARIO_GAME_STREAMING
             )
+            Log.i(TAG, "✓ Audio profile set")
 
-            // Enable audio module.
+            Log.i(TAG, "=== Agora init step 6: enableAudio ===")
             engine.enableAudio()
+            Log.i(TAG, "✓ Audio enabled")
 
             rtcEngine = engine
-            Log.i(TAG, "Agora RtcEngine ready — MUSIC_HIGH_QUALITY + GAME_STREAMING")
+            Log.i(TAG, "=== Agora init COMPLETE ===")
             rtcEngine
         } catch (t: Throwable) {
             val errorMsg = "${t::class.java.simpleName}: ${t.message}"
             lastError = errorMsg
-            Log.e(TAG, "Agora init failed: $errorMsg", t)
+            Log.e(TAG, "Agora init failed at exception: $errorMsg", t)
             try {
                 val app = context.applicationContext as? com.rajatxo.micup.MicUpApp
                 app?.writeIssueLog("Agora init failed: $errorMsg", t)
             } catch (_: Throwable) {}
             null
+        }
+    }
+
+    /** Get the Agora SDK version string for debugging. */
+    private fun getSdkVersion(): String {
+        return try {
+            RtcEngine.getSdkVersion()
+        } catch (_: Throwable) {
+            "unknown"
         }
     }
 
