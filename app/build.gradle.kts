@@ -21,8 +21,8 @@ android {
         applicationId = "com.rajatxo.micup"
         minSdk = 21
         targetSdk = 35
-        versionCode = 31000
-        versionName = "3.1.0-step3"
+        versionCode = 32000
+        versionName = "3.2.0-step4"
         vectorDrawables { useSupportLibrary = true }
 
         // arm64-v8a only — matches Realme 9 5G SE and every phone from 2017+.
@@ -107,4 +107,7 @@ dependencies {
 
     // WebRTC — the ONLY third-party SDK. Step 1 just verifies it loads.
     implementation(libs.stream.webrtc.android)
+
+    // OkHttp — WebSocket client for signaling server (Step 4+).
+    implementation(libs.okhttp)
 }
