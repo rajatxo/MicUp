@@ -115,7 +115,7 @@ class WebRtcClient(
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
             iceTransportsType = PeerConnection.IceTransportsType.ALL
             bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
-            rtcpMuxPolicy = PeerConnection.RtpMuxPolicy.REQUIRE
+            rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
             keyType = PeerConnection.KeyType.ECDSA
         }
 
