@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import io.agora.rtc2.Constants
 import io.agora.rtc2.IRtcEngineEventHandler
+import io.agora.rtc2.RtcEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -102,13 +103,14 @@ class RoomClient(private val context: Context) {
     fun createRoom(): kotlinx.coroutines.Job = scope.launch {
         val code = generateRoomCode()
         _state.value = RoomState.Connecting(code, isHost = true)
-        if (engine.init(eventHandler) == null) {
-            _state.value = RoomState.Failed("Voice engine init failed")
+        val engine = initEngineWithDetailedError()
+        if (engine == null) {
+            // Error state already set by initEngineWithDetailedError
             return@launch
         }
-        val result = engine.joinChannel(code, 0)
+        val result = this@RoomClient.engine.joinChannel(code, 0)
         if (result != 0) {
-            _state.value = RoomState.Failed("Failed to create room (code $result)")
+            _state.value = RoomState.Failed("Failed to create room (Agora error $result)")
         }
         // State becomes Joined when onJoinChannelSuccess fires.
     }
@@ -117,13 +119,42 @@ class RoomClient(private val context: Context) {
     fun joinRoom(code: String): kotlinx.coroutines.Job = scope.launch {
         val upperCode = code.uppercase()
         _state.value = RoomState.Connecting(upperCode, isHost = false)
-        if (engine.init(eventHandler) == null) {
-            _state.value = RoomState.Failed("Voice engine init failed")
+        val engine = initEngineWithDetailedError()
+        if (engine == null) {
             return@launch
         }
-        val result = engine.joinChannel(upperCode, 0)
+        val result = this@RoomClient.engine.joinChannel(upperCode, 0)
         if (result != 0) {
-            _state.value = RoomState.Failed("Failed to join room (code $result)")
+            _state.value = RoomState.Failed("Failed to join room (Agora error $result)")
+        }
+    }
+
+    /**
+     * Initialize the Agora engine with detailed error reporting.
+     * If init fails, sets the RoomState to Failed with the actual error
+     * message (not just "init failed") so the user can tell us what went
+     * wrong.
+     */
+    private fun initEngineWithDetailedError(): RtcEngine? {
+        return try {
+            val engine = engine.init(eventHandler)
+            if (engine == null) {
+                _state.value = RoomState.Failed(
+                    "Voice engine init failed.\n\n" +
+                    "This is usually caused by:\n" +
+                    "1. No internet connection\n" +
+                    "2. Agora App ID is invalid\n" +
+                    "3. Agora native libs failed to load\n\n" +
+                    "Try: Settings → Apps → MicUp → Force stop, then reopen."
+                )
+            }
+            engine
+        } catch (t: Throwable) {
+            _state.value = RoomState.Failed(
+                "Voice engine crashed during init: ${t.message}\n\n" +
+                "Stack: ${t.stackTraceToString().take(300)}"
+            )
+            null
         }
     }
 

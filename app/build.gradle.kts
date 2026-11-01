@@ -22,19 +22,25 @@ android {
         applicationId = "com.rajatxo.micup"
         minSdk = 21
         targetSdk = 35
-        versionCode = 20100
-        versionName = "2.0.1"
+        versionCode = 20200
+        versionName = "2.0.2"
         vectorDrawables { useSupportLibrary = true }
 
         // Agora App ID — baked into the APK via BuildConfig so the
         // app can read it at runtime without a config file.
-        // Rajat's project: 2ebcfb44568b429ab383394e75b6f1cc
         buildConfigField("String", "AGORA_APP_ID", "\"2ebcfb44568b429ab383394e75b6f1cc\"")
 
-        // Agora native libs — include all ABIs so the universal APK works
-        // on every phone.
+        // arm64-v8a ONLY — this is the 64-bit ARM ABI used by every phone
+        // from 2017+ (including Realme 9 5G SE, OnePlus, Samsung, Xiaomi,
+        // etc.). Including other ABIs (armeabi-v7a, x86, x86_64) would
+        // double the APK size because Agora's native libs are ~12MB per
+        // ABI. Dropping to arm64-only cuts the universal APK from ~78MB
+        // to ~40MB — small enough to send over WhatsApp/Telegram.
+        //
+        // If you need 32-bit support for very old phones, add "armeabi-v7a"
+        // to the list below (APK grows by ~12MB).
         ndk {
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            abiFilters += listOf("arm64-v8a")
         }
     }
 

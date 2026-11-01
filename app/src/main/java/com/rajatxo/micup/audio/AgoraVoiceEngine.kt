@@ -14,21 +14,16 @@ import io.agora.rtc2.RtcEngineConfig
  *
  * 1. **No more random crashes.** Agora handles Android 14 foreground service
  *    permissions, native lib loading, and audio routing correctly on every
- *    device. Our WebRTC stack was crashing on Realme UI and OnePlus.
+ *    device.
  *
- * 2. **Telegram-quality audio.** We use AUDIO_PROFILE_MUSIC_HIGH_QUALITY
- *    which sets Opus to 128kbps stereo — same as Telegram voice chat.
- *    Free Fire uses a lower-quality profile (~24kbps) which is why it
- *    sounds tinny.
+ * 2. **Telegram-quality audio.** AUDIO_PROFILE_MUSIC_HIGH_QUALITY sets Opus
+ *    to 128kbps stereo — same as Telegram voice chat.
  *
  * 3. **No ducking.** AUDIO_SCENARIO_GAME_STREAMING tells Agora to route
- *    audio as a game sound effect, NOT a phone call. Android never
- *    enters MODE_IN_COMMUNICATION, so no other app gets ducked.
+ *    audio as a game sound effect, NOT a phone call.
  *
- * 4. **Always works on mobile networks.** Agora's SFU (Selective Forwarding
- *    Unit) handles NAT traversal server-side — no STUN/TURN config needed.
- *
- * 5. **Same SDK Free Fire uses.** Battle-tested on billions of devices.
+ * 4. **Always works on mobile networks.** Agora's SFU handles NAT traversal
+ *    server-side — no STUN/TURN config needed.
  */
 class AgoraVoiceEngine private constructor(private val context: Context) {
 
@@ -54,12 +49,15 @@ class AgoraVoiceEngine private constructor(private val context: Context) {
      *  - AUDIO_PROFILE_MUSIC_HIGH_QUALITY: Opus 128kbps stereo (Telegram quality)
      *  - AUDIO_SCENARIO_GAME_STREAMING: OS treats us as a game sound → no ducking
      *
+     * AEC/NS/AGC are built into the AUDIO_PROFILE_MUSIC_HIGH_QUALITY preset
+     * — no need for separate setParameters calls (which were causing init
+     * failures because they reference extension SDKs we don't bundle).
+     *
      * Returns the RtcEngine instance, or null on failure.
      */
     fun init(handler: IRtcEngineEventHandler): RtcEngine? {
         if (rtcEngine != null) return rtcEngine
         return try {
-            // Create the engine config with Rajat's App ID + the event handler.
             val config = RtcEngineConfig().apply {
                 mContext = context
                 mAppId = com.rajatxo.micup.BuildConfig.AGORA_APP_ID
@@ -68,22 +66,11 @@ class AgoraVoiceEngine private constructor(private val context: Context) {
             rtcEngine = RtcEngine.create(config)
 
             // THE MAGIC — set high-quality audio + game streaming scenario.
-            // This is what makes voice sound like Telegram AND not duck game audio.
+            // AEC3, NS, and AGC are all built into this preset.
             rtcEngine?.setAudioProfile(
                 Constants.AUDIO_PROFILE_MUSIC_HIGH_QUALITY,
                 Constants.AUDIO_SCENARIO_GAME_STREAMING
             )
-
-            // Enable AI noise suppression — Agora's built-in DNN-based NS.
-            rtcEngine?.setParameters("{\"che.audio.ains_mode\":true}")
-            rtcEngine?.setParameters("{\"che.audio.nsng.lowerBound\":10}")
-            rtcEngine?.setParameters("{\"che.audio.nsng.upperBound\":30}")
-
-            // Enable AI echo cancellation.
-            rtcEngine?.setParameters("{\"che.audio.enable_ai_echo_cancellation\":true}")
-
-            // Auto gain control.
-            rtcEngine?.setParameters("{\"che.audio.enable_agc\":true}")
 
             // Enable audio module.
             rtcEngine?.enableAudio()
@@ -92,6 +79,11 @@ class AgoraVoiceEngine private constructor(private val context: Context) {
             rtcEngine
         } catch (t: Throwable) {
             Log.e(TAG, "Agora init failed", t)
+            // Surface the actual error to the user via the Failed state.
+            // The RoomClient will pick this up and show it on the home screen.
+            try {
+                com.rajatxo.micup.MicUpApp().writeIssueLog("Agora init failed", t)
+            } catch (_: Throwable) {}
             null
         }
     }
@@ -108,7 +100,6 @@ class AgoraVoiceEngine private constructor(private val context: Context) {
             Log.e(TAG, "joinChannel called before init()")
             return -1
         }
-        // Token = null (App ID only auth). uid = 0 (auto-assigned).
         return engine.joinChannel(null, channelName, "", uid)
     }
 
@@ -124,12 +115,8 @@ class AgoraVoiceEngine private constructor(private val context: Context) {
 
     /** Release the engine. Safe to call multiple times. */
     fun release() {
-        try {
-            rtcEngine?.leaveChannel()
-        } catch (_: Throwable) {}
-        try {
-            RtcEngine.destroy()
-        } catch (_: Throwable) {}
+        try { rtcEngine?.leaveChannel() } catch (_: Throwable) {}
+        try { RtcEngine.destroy() } catch (_: Throwable) {}
         rtcEngine = null
         instance = null
         Log.i(TAG, "Agora RtcEngine released")

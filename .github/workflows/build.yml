@@ -13,8 +13,6 @@ jobs:
       actions: read
 
     env:
-      # Rajat uses the same keystore across all his apps — secret names stay
-      # the same per the handover doc.
       CORAL_X_KEYSTORE_BASE64: ${{ secrets.CORAL_X_KEYSTORE_BASE64 }}
       CORAL_X_STORE_PASSWORD: ${{ secrets.CORAL_X_STORE_PASSWORD }}
       CORAL_X_KEY_ALIAS: ${{ secrets.CORAL_X_KEY_ALIAS }}
@@ -59,11 +57,8 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
-    - name: Build release APK (per-ABI for smaller downloads)
-      run: ./gradlew :app:assembleRelease --no-daemon --max-workers=2 -PabiSplits=true
-
-    - name: Build debug APK (universal, fallback)
-      run: ./gradlew :app:assembleDebug --no-daemon --max-workers=2 -PabiSplits=false
+    - name: Build release APK (arm64-only, minified)
+      run: ./gradlew :app:assembleRelease --no-daemon --max-workers=2
 
     - name: Get version info
       id: version
@@ -74,31 +69,17 @@ jobs:
         echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
         echo "Version: $VERSION_NAME (code: $VERSION_CODE)"
 
-    - name: List and rename APKs
+    - name: Rename release APK
       run: |
         VERSION_NAME=${{ steps.version.outputs.version_name }}
-        echo "=== All built APKs ==="
-        find app/build/outputs/apk/release -name "*.apk" -exec ls -lh {} \;
-        # Rename each ABI APK with a clear name
-        for apk in app/build/outputs/apk/release/*.apk; do
-          name=$(basename "$apk")
-          if echo "$name" | grep -q "arm64-v8a"; then
-            cp "$apk" "MicUp-v${VERSION_NAME}-arm64.apk"
-          elif echo "$name" | grep -q "armeabi-v7a"; then
-            cp "$apk" "MicUp-v${VERSION_NAME}-armv7.apk"
-          elif echo "$name" | grep -q "universal"; then
-            cp "$apk" "MicUp-v${VERSION_NAME}-universal.apk"
-          fi
-        done
-        echo "=== Renamed APKs ==="
-        ls -lh MicUp-*.apk
-
-    - name: Upload debug APK artifact (fallback)
-      uses: actions/upload-artifact@v4
-      with:
-        name: micup-debug-apk
-        path: app/build/outputs/apk/debug/*.apk
-        retention-days: 7
+        APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+        if [ -n "$APK" ]; then
+          cp "$APK" "MicUp-v${VERSION_NAME}.apk"
+          ls -lh "MicUp-v${VERSION_NAME}.apk"
+        else
+          echo "ERROR: No release APK found"
+          exit 1
+        fi
 
     - name: Delete previous 'latest' release
       run: |
@@ -106,24 +87,17 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Publish release APKs as GitHub Release (direct download, no zip)
+    - name: Publish release APK as GitHub Release
       run: |
         VERSION_NAME=${{ steps.version.outputs.version_name }}
         gh release create latest \
-          "MicUp-v${VERSION_NAME}-arm64.apk" \
-          "MicUp-v${VERSION_NAME}-armv7.apk" \
-          "MicUp-v${VERSION_NAME}-universal.apk" \
+          "MicUp-v${VERSION_NAME}.apk" \
           --title "MicUp v${VERSION_NAME}" \
-          --notes "## Download instructions
+          --notes "## Download
 
-        **Most phones (2017+):** download \`MicUp-v${VERSION_NAME}-arm64.apk\` — smallest, fastest.
+        Download \`MicUp-v${VERSION_NAME}.apk\` below — it's ~40MB (arm64-only, works on every phone from 2017+).
 
-        **Older phones (32-bit):** download \`MicUp-v${VERSION_NAME}-armv7.apk\`.
-
-        **Not sure / any phone:** download \`MicUp-v${VERSION_NAME}-universal.apk\` — works everywhere but is larger.
-
-        ---
-        All APKs are release-signed with Rajat's keystore. If installing over a previous version fails, uninstall the old one first. After v2.0.0, all future updates install cleanly without uninstalling.
+        **If install fails:** uninstall any previous MicUp first, then install this one. After v2.0.0, all future updates install cleanly without uninstalling.
 
         Direct APK download — no zip, no extraction needed." \
           --latest
