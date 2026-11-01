@@ -1,0 +1,6 @@
+name = "micup-signal"
+main = "server/worker.js"
+compatibility_date = "2024-10-01"
+
+# Stateless broadcast signaling server.
+# Free tier: 100k requests/day, unlimited WebSocket connections.
