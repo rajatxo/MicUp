@@ -61,15 +61,34 @@ class AgoraVoiceEngine private constructor(private val context: Context) {
         if (rtcEngine != null) return rtcEngine
         lastError = null
         return try {
+            val appId = com.rajatxo.micup.BuildConfig.AGORA_APP_ID
+            Log.i(TAG, "init() — App ID: ${appId.take(8)}... (${appId.length} chars)")
+
+            // Validate App ID format BEFORE calling Agora.
+            if (appId.isBlank() || appId.length != 32) {
+                lastError = "App ID format invalid (got ${appId.length} chars, expected 32)"
+                Log.e(TAG, lastError!!)
+                return null
+            }
+
             val config = RtcEngineConfig().apply {
                 mContext = context
-                mAppId = com.rajatxo.micup.BuildConfig.AGORA_APP_ID
+                mAppId = appId
                 mEventHandler = handler
             }
             val engine = RtcEngine.create(config)
 
+            // CRITICAL: RtcEngine.create() returns null if the App ID is
+            // rejected (invalid, wrong project, deleted, etc.).
+            if (engine == null) {
+                lastError = "RtcEngine.create() returned null — App ID rejected by Agora. " +
+                    "Check the Agora console: console.agora.io → Project Management → " +
+                    "verify the App ID matches AND the auth mode is 'App ID only' (not 'App ID + Token')."
+                Log.e(TAG, lastError!!)
+                return null
+            }
+
             // THE MAGIC — set high-quality audio + game streaming scenario.
-            // AEC3, NS, and AGC are all built into this preset.
             engine.setAudioProfile(
                 Constants.AUDIO_PROFILE_MUSIC_HIGH_QUALITY,
                 Constants.AUDIO_SCENARIO_GAME_STREAMING
@@ -82,11 +101,9 @@ class AgoraVoiceEngine private constructor(private val context: Context) {
             Log.i(TAG, "Agora RtcEngine ready — MUSIC_HIGH_QUALITY + GAME_STREAMING")
             rtcEngine
         } catch (t: Throwable) {
-            // Capture the FULL error for debugging.
             val errorMsg = "${t::class.java.simpleName}: ${t.message}"
             lastError = errorMsg
             Log.e(TAG, "Agora init failed: $errorMsg", t)
-            // Also write to the crash log so the user can share it.
             try {
                 val app = context.applicationContext as? com.rajatxo.micup.MicUpApp
                 app?.writeIssueLog("Agora init failed: $errorMsg", t)
