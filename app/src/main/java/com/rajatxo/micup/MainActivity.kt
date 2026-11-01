@@ -274,121 +274,119 @@ private fun EchoCard(
     DisposableEffect(isEchoing) {
         if (!isEchoing) {
             // Not echoing — nothing to do. onDispose is a no-op.
-            onDispose { }
-            return@DisposableEffect
-        }
+            onDispose { /* no-op */ }
+        } else {
+            var audioRecord: AudioRecord? = null
+            var audioTrack: AudioTrack? = null
+            var isRunning = true
 
-        var audioRecord: AudioRecord? = null
-        var audioTrack: AudioTrack? = null
-        var isRunning = true
+            val thread = Thread {
+                try {
+                    val sampleRate = 48_000
+                    val channelConfigIn = AudioFormat.CHANNEL_IN_MONO
+                    val channelConfigOut = AudioFormat.CHANNEL_OUT_MONO
+                    val audioFormat = AudioFormat.ENCODING_PCM_16BIT
 
-        val thread = Thread {
-            try {
-                val sampleRate = 48_000
-                val channelConfigIn = AudioFormat.CHANNEL_IN_MONO
-                val channelConfigOut = AudioFormat.CHANNEL_OUT_MONO
-                val audioFormat = AudioFormat.ENCODING_PCM_16BIT
+                    val minBufIn = AudioRecord.getMinBufferSize(sampleRate, channelConfigIn, audioFormat)
+                    val minBufOut = AudioTrack.getMinBufferSize(sampleRate, channelConfigOut, audioFormat)
+                    // 40ms buffer — small enough for low latency, big enough to avoid glitches.
+                    val bufferSize = maxOf(minBufIn, minBufOut, 1920 * 2)
+                    status = "Buffer: $bufferSize bytes"
 
-                val minBufIn = AudioRecord.getMinBufferSize(sampleRate, channelConfigIn, audioFormat)
-                val minBufOut = AudioTrack.getMinBufferSize(sampleRate, channelConfigOut, audioFormat)
-                // 40ms buffer — small enough for low latency, big enough to avoid glitches.
-                val bufferSize = maxOf(minBufIn, minBufOut, 1920 * 2)
-                status = "Buffer: $bufferSize bytes"
-
-                status = "Creating AudioRecord..."
-                @Suppress("MissingPermission")
-                val record = AudioRecord(
-                    MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-                    sampleRate,
-                    channelConfigIn,
-                    audioFormat,
-                    bufferSize
-                )
-                if (record.state != AudioRecord.STATE_INITIALIZED) {
-                    errorMessage = "AudioRecord init failed (state=${record.state})"
-                    status = "FAILED"
-                    return@Thread
-                }
-
-                status = "Creating AudioTrack..."
-                val track = AudioTrack.Builder()
-                    .setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                            .build()
+                    status = "Creating AudioRecord..."
+                    @Suppress("MissingPermission")
+                    val record = AudioRecord(
+                        MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                        sampleRate,
+                        channelConfigIn,
+                        audioFormat,
+                        bufferSize
                     )
-                    .setAudioFormat(
-                        AudioFormat.Builder()
-                            .setEncoding(audioFormat)
-                            .setSampleRate(sampleRate)
-                            .setChannelMask(channelConfigOut)
-                            .build()
-                    )
-                    .setBufferSizeInBytes(bufferSize)
-                    .setTransferMode(AudioTrack.MODE_STREAM)
-                    .build()
-                if (track.state != AudioTrack.STATE_INITIALIZED) {
-                    errorMessage = "AudioTrack init failed (state=${track.state})"
-                    status = "FAILED"
-                    return@Thread
-                }
-
-                audioRecord = record
-                audioTrack = track
-
-                status = "Starting..."
-                record.startRecording()
-                track.play()
-
-                if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
-                    errorMessage = "AudioRecord didn't start"
-                    status = "FAILED"
-                    return@Thread
-                }
-                if (track.playState != AudioTrack.PLAYSTATE_PLAYING) {
-                    errorMessage = "AudioTrack didn't start"
-                    status = "FAILED"
-                    return@Thread
-                }
-
-                status = "ECHOING — speak now!"
-
-                val buffer = ShortArray(bufferSize / 2)
-                while (isRunning) {
-                    val read = record.read(buffer, 0, buffer.size)
-                    if (read > 0) {
-                        // Write to speaker — this is the echo.
-                        track.write(buffer, 0, read)
-
-                        // Update volume meter.
-                        sampleCount += 1
-                        var sum = 0.0
-                        for (i in 0 until read) {
-                            val s = buffer[i].toDouble()
-                            sum += s * s
-                        }
-                        val rms = sqrt(sum / read)
-                        val normalized = (rms / 32768.0).toFloat()
-                        volume = (normalized * 5f).coerceIn(0f, 1f)
+                    if (record.state != AudioRecord.STATE_INITIALIZED) {
+                        errorMessage = "AudioRecord init failed (state=${record.state})"
+                        status = "FAILED"
+                        return@Thread
                     }
-                }
-            } catch (t: Throwable) {
-                errorMessage = "${t::class.java.simpleName}: ${t.message}"
-                status = "FAILED"
-            } finally {
-                try { audioRecord?.stop() } catch (_: Throwable) {}
-                try { audioRecord?.release() } catch (_: Throwable) {}
-                try { audioTrack?.stop() } catch (_: Throwable) {}
-                try { audioTrack?.release() } catch (_: Throwable) {}
-            }
-        }
-        thread.start()
 
-        onDispose {
-            isRunning = false
-            // The thread's finally block will clean up audioRecord/audioTrack.
-            try { thread.join(500) } catch (_: Throwable) {}
+                    status = "Creating AudioTrack..."
+                    val track = AudioTrack.Builder()
+                        .setAudioAttributes(
+                            AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                                .build()
+                        )
+                        .setAudioFormat(
+                            AudioFormat.Builder()
+                                .setEncoding(audioFormat)
+                                .setSampleRate(sampleRate)
+                                .setChannelMask(channelConfigOut)
+                                .build()
+                        )
+                        .setBufferSizeInBytes(bufferSize)
+                        .setTransferMode(AudioTrack.MODE_STREAM)
+                        .build()
+                    if (track.state != AudioTrack.STATE_INITIALIZED) {
+                        errorMessage = "AudioTrack init failed (state=${track.state})"
+                        status = "FAILED"
+                        return@Thread
+                    }
+
+                    audioRecord = record
+                    audioTrack = track
+
+                    status = "Starting..."
+                    record.startRecording()
+                    track.play()
+
+                    if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                        errorMessage = "AudioRecord didn't start"
+                        status = "FAILED"
+                        return@Thread
+                    }
+                    if (track.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                        errorMessage = "AudioTrack didn't start"
+                        status = "FAILED"
+                        return@Thread
+                    }
+
+                    status = "ECHOING — speak now!"
+
+                    val buffer = ShortArray(bufferSize / 2)
+                    while (isRunning) {
+                        val read = record.read(buffer, 0, buffer.size)
+                        if (read > 0) {
+                            // Write to speaker — this is the echo.
+                            track.write(buffer, 0, read)
+
+                            // Update volume meter.
+                            sampleCount += 1
+                            var sum = 0.0
+                            for (i in 0 until read) {
+                                val s = buffer[i].toDouble()
+                                sum += s * s
+                            }
+                            val rms = sqrt(sum / read)
+                            val normalized = (rms / 32768.0).toFloat()
+                            volume = (normalized * 5f).coerceIn(0f, 1f)
+                        }
+                    }
+                } catch (t: Throwable) {
+                    errorMessage = "${t::class.java.simpleName}: ${t.message}"
+                    status = "FAILED"
+                } finally {
+                    try { audioRecord?.stop() } catch (_: Throwable) {}
+                    try { audioRecord?.release() } catch (_: Throwable) {}
+                    try { audioTrack?.stop() } catch (_: Throwable) {}
+                    try { audioTrack?.release() } catch (_: Throwable) {}
+                }
+            }
+            thread.start()
+
+            onDispose {
+                isRunning = false
+                try { thread.join(500) } catch (_: Throwable) {}
+            }
         }
     }
 
