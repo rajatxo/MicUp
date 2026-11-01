@@ -196,6 +196,10 @@ private fun VolumeMeterCard(appContext: android.content.Context) {
     // JavaAudioDeviceModule — we use the Java helper for all operations.
     var adm by remember { mutableStateOf<Any?>(null) }
 
+    // Count of samples received — proves the callback is firing.
+    var sampleCount by remember { mutableStateOf(0L) }
+    var lastSampleTime by remember { mutableStateOf(0L) }
+
     DisposableEffect(Unit) {
         // Build a separate thread for WebRTC work so we don't block the UI.
         val thread = Thread {
@@ -213,29 +217,27 @@ private fun VolumeMeterCard(appContext: android.content.Context) {
                 // JavaAudioDeviceModule directly due to a metadata issue
                 // with stream-webrtc-android 1.3.9.
                 val admInstance = AudioDeviceModuleBuilder.build(appContext) { audioSamples ->
+                    // Increment counter + record timestamp — proves callback fires.
+                    sampleCount += 1
+                    lastSampleTime = System.currentTimeMillis()
+
                     // audioSamples.data is a byte[] of 16-bit PCM audio.
-                    // We compute RMS (root mean square) = volume.
                     val data = audioSamples.data
                     if (data.size > 1) {
                         var sum = 0.0
-                        // Read 16-bit samples (little-endian shorts) and sum squares.
-                        // Skip every other sample for performance.
                         var i = 0
                         while (i + 1 < data.size) {
                             val b1 = data[i].toInt() and 0xFF
                             val b2 = data[i + 1].toInt() and 0xFF
                             val sample = (b2 shl 8) or b1
-                            // Convert to signed short
                             val signed = if (sample > 32767) sample - 65536 else sample
                             sum += signed.toDouble() * signed.toDouble()
-                            i += 4  // skip every other sample
+                            i += 4
                         }
-                        val sampleCount = (data.size / 4)
-                        if (sampleCount > 0) {
-                            val rms = sqrt(sum / sampleCount)
-                            // Normalize: RMS ranges 0-32768. Map to 0-1.
+                        val count = (data.size / 4)
+                        if (count > 0) {
+                            val rms = sqrt(sum / count)
                             val normalized = (rms / 32768.0).toFloat()
-                            // Boost the curve so normal speech is visible.
                             val boosted = (normalized * 4f).coerceIn(0f, 1f)
                             volume = boosted
                         }
@@ -244,11 +246,21 @@ private fun VolumeMeterCard(appContext: android.content.Context) {
 
                 adm = admInstance
 
-                status = "Starting mic capture..."
-                // Build the PeerConnectionFactory — this STARTS the mic capture.
+                status = "Building PeerConnectionFactory..."
                 val factory = PeerConnectionFactory.builder()
                     .setAudioDeviceModule(admInstance)
                     .createPeerConnectionFactory()
+
+                // CRITICAL: PeerConnectionFactory alone doesn't start mic capture.
+                // WebRTC only pulls from the mic when an AudioSource + AudioTrack
+                // is created AND enabled. Without this, SamplesReadyCallback
+                // never fires — which is exactly what the user is seeing (bar
+                // doesn't move).
+                status = "Creating audio source + track..."
+                val constraints = org.webrtc.MediaConstraints()
+                val audioSource = factory.createAudioSource(constraints)
+                val audioTrack = factory.createAudioTrack("ARDAMS", audioSource)
+                audioTrack.setEnabled(true)
 
                 status = "Speak into your mic!"
             } catch (t: Throwable) {
@@ -331,6 +343,20 @@ private fun VolumeMeterCard(appContext: android.content.Context) {
                 color = Color(0xFFCCCCCC),
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace
+            )
+
+            Spacer(Modifier.height(8.dp))
+
+            // DIAGNOSTIC: shows if SamplesReadyCallback is firing.
+            // If sampleCount stays 0 → callback never fires (mic not capturing)
+            // If sampleCount increases but bar stays 0 → audio is silent
+            // If sampleCount increases AND bar moves → working!
+            val ageSec = if (lastSampleTime > 0) (System.currentTimeMillis() - lastSampleTime) / 1000 else -1
+            Text(
+                text = "samples: $sampleCount · last: ${if (ageSec < 0) "never" else "${ageSec}s ago"}",
+                color = Color(0xFF888888),
+                fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace
             )
 

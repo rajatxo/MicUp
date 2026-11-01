@@ -21,8 +21,8 @@ android {
         applicationId = "com.rajatxo.micup"
         minSdk = 21
         targetSdk = 35
-        versionCode = 30100
-        versionName = "3.0.1-step2"
+        versionCode = 30200
+        versionName = "3.0.2-step2b"
         vectorDrawables { useSupportLibrary = true }
 
         // arm64-v8a only — matches Realme 9 5G SE and every phone from 2017+.
