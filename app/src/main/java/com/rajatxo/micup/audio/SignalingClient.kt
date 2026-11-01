@@ -56,13 +56,14 @@ class SignalingClient(
                     val to = json.optString("to", "")
                     val message = when (type) {
                         "hello", "Hello" -> SignalingMessage.Hello(from, json.optString("name", from))
-                        "offer", "Offer" -> SignalingMessage.Offer(from, json.optString("sdp", json.optString("description", "")))
-                        "answer", "Answer" -> SignalingMessage.Answer(from, json.optString("sdp", json.optString("description", "")))
+                        "offer", "Offer" -> SignalingMessage.Offer(from, to, json.optString("sdp", json.optString("description", "")))
+                        "answer", "Answer" -> SignalingMessage.Answer(from, to, json.optString("sdp", json.optString("description", "")))
                         "ice", "Ice", "ice-candidate" -> {
                             val cand = json.optJSONObject("candidate")
                                 ?: json.optJSONObject("iceCandidate")
                             SignalingMessage.Ice(
                                 from,
+                                to,
                                 cand?.optString("sdp", cand.optString("candidate", "")) ?: "",
                                 cand?.optString("sdpMid", cand.optString("sdpMid", null)),
                                 cand?.optInt("sdpMLineIndex", 0) ?: 0
