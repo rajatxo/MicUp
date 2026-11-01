@@ -25,19 +25,21 @@ public final class AudioDeviceModuleBuilder {
     /**
      * Build the AudioDeviceModule with software AEC/NS (not hardware).
      *
-     * We pass a SamplesReadyCallback so we can compute the live mic
-     * volume (RMS of the captured 16-bit PCM samples).
+     * @param samplesCallback optional — pass null if you don't need
+     *   raw PCM samples (e.g. Step 5 SDP test doesn't need them).
      */
     public static JavaAudioDeviceModule build(
             Context context,
             JavaAudioDeviceModule.SamplesReadyCallback samplesCallback) {
-        return JavaAudioDeviceModule.builder(context)
+        JavaAudioDeviceModule.Builder builder = JavaAudioDeviceModule.builder(context)
                 .setSampleRate(48_000)
                 .setUseHardwareAcousticEchoCanceler(false)
                 .setUseHardwareNoiseSuppressor(false)
-                .setUseStereoOutput(true)
-                .setSamplesReadyCallback(samplesCallback)
-                .createAudioDeviceModule();
+                .setUseStereoOutput(true);
+        if (samplesCallback != null) {
+            builder.setSamplesReadyCallback(samplesCallback);
+        }
+        return builder.createAudioDeviceModule();
     }
 
     /**
