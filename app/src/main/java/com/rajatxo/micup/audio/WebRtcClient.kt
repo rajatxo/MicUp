@@ -4,18 +4,13 @@ import android.content.Context
 import android.util.Log
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
-import org.webrtc.DefaultAudioDecoderFactory
-import org.webrtc.DefaultAudioEncoderFactory
 import org.webrtc.IceCandidate
 import org.webrtc.MediaConstraints
-import org.webrtc.MediaStreamTrack
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
 import org.webrtc.RtpReceiver
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
-import org.webrtc.SoftwareVideoDecoderFactory
-import org.webrtc.VideoEncoderFactory
 import org.webrtc.audio.JavaAudioDeviceModule
 import java.util.concurrent.ConcurrentHashMap
 
