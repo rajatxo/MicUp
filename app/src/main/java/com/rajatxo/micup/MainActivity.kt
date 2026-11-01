@@ -2,8 +2,11 @@ package com.rajatxo.micup
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
+import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -15,6 +18,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,6 +26,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +48,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -50,19 +56,18 @@ import androidx.core.view.WindowCompat
 import kotlin.math.sqrt
 
 /**
- * Step 2 (revised) — Mic capture test using Android's NATIVE AudioRecord.
+ * Step 3 — Echo test. Captures mic input and plays it back through the
+ * speaker immediately. You should hear yourself with a slight delay.
  *
- * PREVIOUS APPROACH FAILED: WebRTC's AudioDeviceModule is lazy — it
- * doesn't start capturing until a PeerConnection pulls from it. So
- * the SamplesReadyCallback never fired and the bar stayed at 0%.
+ * Proves:
+ * 1. Audio OUTPUT works (AudioTrack can play to speaker)
+ * 2. Capture → playback pipeline works end-to-end on a single device
+ * 3. Latency is acceptable for real-time voice chat
  *
- * NEW APPROACH: Use Android's native AudioRecord API directly. This
- * proves the mic hardware + permission work at all, bypassing WebRTC
- * entirely. If this works → mic is fine, we move to Step 3. If this
- * fails → Realme is blocking mic access at the OS level.
+ * IMPORTANT: USE HEADPHONES! Without headphones, the mic picks up the
+ * speaker output → feedback howl. We show a warning before starting.
  *
- * Visual: a coral volume bar that grows/shrinks as you speak, with
- * a live sample counter so we can verify capture is actually happening.
+ * This is the LAST single-device test. Step 4 starts connecting 2 phones.
  */
 class MainActivity : ComponentActivity() {
 
@@ -72,14 +77,14 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             MaterialTheme {
-                MicTestScreen()
+                EchoTestScreen()
             }
         }
     }
 }
 
 @Composable
-private fun MicTestScreen() {
+private fun EchoTestScreen() {
     val context = LocalContext.current
     val appContext = context.applicationContext
 
@@ -99,6 +104,10 @@ private fun MicTestScreen() {
             permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
+
+    // Echo state: false = stopped, true = echoing
+    var isEchoing by remember { mutableStateOf(false) }
+    var showHeadphoneWarning by remember { mutableStateOf(false) }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -120,7 +129,7 @@ private fun MicTestScreen() {
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                text = "Step 2 of 10 — Mic Capture Test (native)",
+                text = "Step 3 of 10 — Echo Test",
                 color = Color(0xFF888888),
                 fontSize = 13.sp
             )
@@ -133,8 +142,28 @@ private fun MicTestScreen() {
                         permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                     })
                 }
+                showHeadphoneWarning -> {
+                    HeadphoneWarningCard(
+                        onProceed = {
+                            showHeadphoneWarning = false
+                            isEchoing = true
+                        },
+                        onCancel = { showHeadphoneWarning = false }
+                    )
+                }
                 else -> {
-                    NativeVolumeMeterCard(appContext)
+                    EchoCard(
+                        appContext = appContext,
+                        isEchoing = isEchoing,
+                        onToggle = { shouldEcho ->
+                            if (shouldEcho) {
+                                // Show headphone warning before starting
+                                showHeadphoneWarning = true
+                            } else {
+                                isEchoing = false
+                            }
+                        }
+                    )
                 }
             }
         }
@@ -157,12 +186,6 @@ private fun PermissionCard(onRequest: () -> Unit) {
             fontSize = 16.sp,
             fontWeight = FontWeight.Bold
         )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = "Tap below to grant — required for voice chat",
-            color = Color(0xFFCCCCCC),
-            fontSize = 13.sp
-        )
         Spacer(Modifier.height(16.dp))
         Box(
             modifier = Modifier
@@ -180,71 +203,166 @@ private fun PermissionCard(onRequest: () -> Unit) {
     }
 }
 
-/**
- * Volume meter using Android's NATIVE AudioRecord.
- *
- * This bypasses WebRTC entirely. If this works → mic hardware is fine
- * and we move to Step 3 (echo test). If this fails → OS-level mic block.
- *
- * Uses 16-bit PCM at 48kHz mono — standard voice chat config.
- */
 @Composable
-private fun NativeVolumeMeterCard(appContext: android.content.Context) {
+private fun HeadphoneWarningCard(
+    onProceed: () -> Unit,
+    onCancel: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color(0x22F4B400))
+            .padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = "⚠️ Use headphones",
+            color = Color(0xFFF4B400),
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = "Without headphones, you'll get a loud feedback howl.\n\nPlug in earphones/headphones, then tap Start.",
+            color = Color(0xFFCCCCCC),
+            fontSize = 13.sp,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(20.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0x1AFFFFFF))
+                    .clickable { onCancel() }
+                    .padding(vertical = 14.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("Cancel", color = Color.White, fontWeight = FontWeight.SemiBold)
+            }
+            Box(
+                modifier = Modifier
+                    .weight(1.4f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFFFF6B6B))
+                    .clickable { onProceed() }
+                    .padding(vertical = 14.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("Start echo", color = Color.Black, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun EchoCard(
+    appContext: android.content.Context,
+    isEchoing: Boolean,
+    onToggle: (Boolean) -> Unit
+) {
     var volume by remember { mutableFloatStateOf(0f) }
-    var status by remember { mutableStateOf("Starting mic...") }
+    var status by remember { mutableStateOf("Tap Start to begin echo test") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var sampleCount by remember { mutableLongStateOf(0L) }
-    var lastSampleAgeMs by remember { mutableLongStateOf(-1L) }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(isEchoing) {
+        if (!isEchoing) {
+            // Not echoing — nothing to do. onDispose is a no-op.
+            onDispose { }
+            return@DisposableEffect
+        }
+
         var audioRecord: AudioRecord? = null
+        var audioTrack: AudioTrack? = null
         var isRunning = true
 
         val thread = Thread {
             try {
                 val sampleRate = 48_000
-                val channelConfig = AudioFormat.CHANNEL_IN_MONO
+                val channelConfigIn = AudioFormat.CHANNEL_IN_MONO
+                val channelConfigOut = AudioFormat.CHANNEL_OUT_MONO
                 val audioFormat = AudioFormat.ENCODING_PCM_16BIT
 
-                val minBuf = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
-                val bufferSize = maxOf(minBuf * 2, 1920)
-                status = "Buffer size: $bufferSize bytes"
+                val minBufIn = AudioRecord.getMinBufferSize(sampleRate, channelConfigIn, audioFormat)
+                val minBufOut = AudioTrack.getMinBufferSize(sampleRate, channelConfigOut, audioFormat)
+                // 40ms buffer — small enough for low latency, big enough to avoid glitches.
+                val bufferSize = maxOf(minBufIn, minBufOut, 1920 * 2)
+                status = "Buffer: $bufferSize bytes"
 
                 status = "Creating AudioRecord..."
                 @Suppress("MissingPermission")
                 val record = AudioRecord(
                     MediaRecorder.AudioSource.VOICE_COMMUNICATION,
                     sampleRate,
-                    channelConfig,
+                    channelConfigIn,
                     audioFormat,
                     bufferSize
                 )
-
                 if (record.state != AudioRecord.STATE_INITIALIZED) {
-                    errorMessage = "AudioRecord failed to initialize (state=${record.state})"
+                    errorMessage = "AudioRecord init failed (state=${record.state})"
                     status = "FAILED"
                     return@Thread
                 }
 
-                status = "Starting recording..."
-                record.startRecording()
+                status = "Creating AudioTrack..."
+                val track = AudioTrack.Builder()
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build()
+                    )
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(audioFormat)
+                            .setSampleRate(sampleRate)
+                            .setChannelMask(channelConfigOut)
+                            .build()
+                    )
+                    .setBufferSizeInBytes(bufferSize)
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .build()
+                if (track.state != AudioTrack.STATE_INITIALIZED) {
+                    errorMessage = "AudioTrack init failed (state=${track.state})"
+                    status = "FAILED"
+                    return@Thread
+                }
+
                 audioRecord = record
+                audioTrack = track
+
+                status = "Starting..."
+                record.startRecording()
+                track.play()
 
                 if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
-                    errorMessage = "AudioRecord didn't start (state=${record.recordingState})"
+                    errorMessage = "AudioRecord didn't start"
+                    status = "FAILED"
+                    return@Thread
+                }
+                if (track.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                    errorMessage = "AudioTrack didn't start"
                     status = "FAILED"
                     return@Thread
                 }
 
-                status = "Speak into your mic!"
+                status = "ECHOING — speak now!"
 
                 val buffer = ShortArray(bufferSize / 2)
                 while (isRunning) {
                     val read = record.read(buffer, 0, buffer.size)
                     if (read > 0) {
-                        sampleCount += 1
-                        lastSampleAgeMs = 0
+                        // Write to speaker — this is the echo.
+                        track.write(buffer, 0, read)
 
+                        // Update volume meter.
+                        sampleCount += 1
                         var sum = 0.0
                         for (i in 0 until read) {
                             val s = buffer[i].toDouble()
@@ -252,33 +370,25 @@ private fun NativeVolumeMeterCard(appContext: android.content.Context) {
                         }
                         val rms = sqrt(sum / read)
                         val normalized = (rms / 32768.0).toFloat()
-                        val boosted = (normalized * 5f).coerceIn(0f, 1f)
-                        volume = boosted
+                        volume = (normalized * 5f).coerceIn(0f, 1f)
                     }
                 }
             } catch (t: Throwable) {
                 errorMessage = "${t::class.java.simpleName}: ${t.message}"
                 status = "FAILED"
+            } finally {
+                try { audioRecord?.stop() } catch (_: Throwable) {}
+                try { audioRecord?.release() } catch (_: Throwable) {}
+                try { audioTrack?.stop() } catch (_: Throwable) {}
+                try { audioTrack?.release() } catch (_: Throwable) {}
             }
         }
         thread.start()
 
-        // Background ticker to update "last sample age" display.
-        val ticker = Thread {
-            while (isRunning) {
-                try { Thread.sleep(200) } catch (_: Throwable) {}
-                if (lastSampleAgeMs >= 0) {
-                    lastSampleAgeMs += 200
-                }
-            }
-        }
-        ticker.start()
-
         onDispose {
             isRunning = false
-            try { audioRecord?.stop() } catch (_: Throwable) {}
-            try { audioRecord?.release() } catch (_: Throwable) {}
-            audioRecord = null
+            // The thread's finally block will clean up audioRecord/audioTrack.
+            try { thread.join(500) } catch (_: Throwable) {}
         }
     }
 
@@ -309,24 +419,26 @@ private fun NativeVolumeMeterCard(appContext: android.content.Context) {
 
         Text(
             text = status,
-            color = Color.White,
-            fontSize = 15.sp
+            color = if (isEchoing) Color(0xFF4ADE80) else Color.White,
+            fontSize = 15.sp,
+            fontWeight = if (isEchoing) FontWeight.Bold else FontWeight.Normal
         )
 
-        if (status == "Speak into your mic!") {
-            Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(24.dp))
 
+        // Volume bar (only visible while echoing)
+        if (isEchoing) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(120.dp)
+                    .height(80.dp)
                     .clip(RoundedCornerShape(16.dp))
                     .background(Color(0x14FFFFFF))
             ) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height((volume * 120f).dp)
+                        .height((volume * 80f).dp)
                         .clip(RoundedCornerShape(16.dp))
                         .background(
                             if (volume > 0.7f) Color(0xFF4ADE80)
@@ -336,46 +448,41 @@ private fun NativeVolumeMeterCard(appContext: android.content.Context) {
                         .align(Alignment.BottomCenter)
                 )
             }
-
-            Spacer(Modifier.height(16.dp))
-
+            Spacer(Modifier.height(12.dp))
             Text(
-                text = "${(volume * 100).toInt()}%",
-                color = Color(0xFFCCCCCC),
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
-            )
-
-            Spacer(Modifier.height(8.dp))
-
-            val ageText = when {
-                lastSampleAgeMs < 0 -> "never"
-                lastSampleAgeMs == 0L -> "now"
-                lastSampleAgeMs < 1000 -> "${lastSampleAgeMs}ms ago"
-                else -> "${lastSampleAgeMs / 1000}s ago"
-            }
-            Text(
-                text = "samples: $sampleCount · last: $ageText",
+                text = "${(volume * 100).toInt()}% · ${sampleCount} samples",
                 color = Color(0xFF888888),
                 fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace
             )
+            Spacer(Modifier.height(20.dp))
+        }
 
-            Spacer(Modifier.height(8.dp))
-
+        // Start/Stop button
+        Box(
+            modifier = Modifier
+                .size(80.dp)
+                .clip(CircleShape)
+                .background(if (isEchoing) Color(0xFFFF5252) else Color(0xFFFF6B6B))
+                .clickable { onToggle(!isEchoing) },
+            contentAlignment = Alignment.Center
+        ) {
             Text(
-                text = "Talk into your phone — the bar should move",
-                color = Color(0xFF888888),
-                fontSize = 12.sp
-            )
-        } else if (status != "FAILED") {
-            Spacer(Modifier.height(24.dp))
-            CircularProgressIndicator(
-                color = Color(0xFFFF6B6B),
-                strokeWidth = 3.dp,
-                modifier = Modifier.size(40.dp)
+                text = if (isEchoing) "STOP" else "START",
+                color = Color.Black,
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp
             )
         }
+
+        Spacer(Modifier.height(12.dp))
+
+        Text(
+            text = if (isEchoing) "You should hear yourself with a slight delay"
+                   else "Plug in headphones, then tap START",
+            color = Color(0xFF888888),
+            fontSize = 12.sp,
+            textAlign = TextAlign.Center
+        )
     }
 }
