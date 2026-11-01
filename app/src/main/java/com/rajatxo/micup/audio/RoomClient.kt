@@ -68,9 +68,25 @@ class RoomClient(private val context: Context) {
         }
 
         override fun onError(err: Int) {
-            Log.e(TAG, "Agora error: $err")
+            Log.e(TAG, "Agora onError fired — error code: $err")
+            // CRITICAL: error 101 = Invalid App ID. The user's App ID is
+            // being rejected by Agora. Surface this immediately so we
+            // know the real cause instead of timing out after 15s.
+            val errorMsg = when (err) {
+                101 -> "Agora error 101: INVALID APP ID. The App ID 2ebcfb44... is rejected by Agora. Go to console.agora.io → check if the project is activated and the App ID matches."
+                3 -> "Agora error 3: SDK not ready (init failed)"
+                102 -> "Agora error 102: INVALID CHANNEL NAME"
+                109 -> "Agora error 109: TOKEN EXPIRED"
+                110 -> "Agora error 110: TOKEN INVALID"
+                else -> "Agora error code: $err"
+            }
+            // If we're still in Connecting state, fail immediately with
+            // the specific error instead of waiting for the 15s timeout.
+            if (_state.value is RoomState.Connecting) {
+                _state.value = RoomState.Failed(errorMsg)
+            }
             scope.launch {
-                _events.emit(RoomEvent.AgoraError("Agora error code: $err"))
+                _events.emit(RoomEvent.AgoraError(errorMsg))
             }
         }
 
@@ -79,10 +95,8 @@ class RoomClient(private val context: Context) {
             speakers: Array<out AudioVolumeInfo>?,
             totalVolume: Int
         ) {
-            // Used for "who's talking" indicators — emits for each speaker
-            // with their current volume level.
             speakers?.forEach { info ->
-                val talking = info.volume > 30  // arbitrary threshold
+                val talking = info.volume > 30
                 scope.launch {
                     _events.emit(RoomEvent.PeerAudioLevel(info.uid.toString(), talking))
                 }
