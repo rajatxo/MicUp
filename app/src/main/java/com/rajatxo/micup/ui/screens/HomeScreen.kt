@@ -370,7 +370,7 @@ fun HomeScreen(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "Made with love in India",
+                    text = "Made with love in India · v${getAppVersion(ctx)}",
                     style = MaterialTheme.typography.labelMedium,
                     color = TextSecondary
                 )
@@ -451,5 +451,15 @@ private fun SecondaryButton(
             color = TextSecondary,
             style = MaterialTheme.typography.titleMedium
         )
+    }
+}
+
+/** Reads the actual app version from PackageInfo. */
+private fun getAppVersion(context: android.content.Context): String {
+    return try {
+        val pi = context.packageManager.getPackageInfo(context.packageName, 0)
+        pi.versionName ?: "unknown"
+    } catch (_: Throwable) {
+        "unknown"
     }
 }

@@ -103,9 +103,9 @@ class RoomClient(private val context: Context) {
     fun createRoom(): kotlinx.coroutines.Job = scope.launch {
         val code = generateRoomCode()
         _state.value = RoomState.Connecting(code, isHost = true)
-        // CRITICAL: Agora's RtcEngine.create() MUST be called on the main
-        // thread. On some devices (Realme, OnePlus), calling it from a
-        // background thread causes it to return null silently.
+        // Timeout: if we're still Connecting after 15 seconds, fail with
+        // a helpful message instead of buffering forever.
+        launchTimeout()
         val engine = initEngineOnMainThread()
         if (engine == null) {
             return@launch
@@ -121,6 +121,7 @@ class RoomClient(private val context: Context) {
     fun joinRoom(code: String): kotlinx.coroutines.Job = scope.launch {
         val upperCode = code.uppercase()
         _state.value = RoomState.Connecting(upperCode, isHost = false)
+        launchTimeout()
         val engine = initEngineOnMainThread()
         if (engine == null) {
             return@launch
@@ -128,6 +129,26 @@ class RoomClient(private val context: Context) {
         val result = this@RoomClient.engine.joinChannel(upperCode, 0)
         if (result != 0) {
             _state.value = RoomState.Failed("Failed to join room (Agora error $result)")
+        }
+    }
+
+    /**
+     * Auto-fail after 15 seconds if still in Connecting state.
+     * Prevents infinite buffering if Agora hangs or never calls back.
+     */
+    private fun launchTimeout() {
+        scope.launch {
+            kotlinx.coroutines.delay(15_000)
+            if (_state.value is RoomState.Connecting) {
+                _state.value = RoomState.Failed(
+                    "Connection timed out after 15 seconds.\n\n" +
+                    "Agora SDK did not respond. This could be:\n" +
+                    "1. No internet connection\n" +
+                    "2. Agora servers unreachable\n" +
+                    "3. App ID rejected silently\n\n" +
+                    "Try: close the app completely, reopen, try again."
+                )
+            }
         }
     }
 

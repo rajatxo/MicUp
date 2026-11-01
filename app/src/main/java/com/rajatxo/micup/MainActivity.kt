@@ -104,14 +104,25 @@ class MainActivity : ComponentActivity() {
     private fun readIssueLog(): String? {
         return try {
             val file = File(filesDir, MicUpApp.ISSUE_LOG_FILENAME)
-            if (file.exists()) file.readText() else null
+            if (!file.exists()) return null
+            val log = file.readText()
+            // Only show crash logs from the CURRENT version. If the log is
+            // from a previous version (e.g., user updated without dismissing),
+            // delete it silently — no point showing stale crashes.
+            val currentVersion = try {
+                packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown"
+            } catch (_: Throwable) { "unknown" }
+            if (!log.contains("App version: $currentVersion")) {
+                file.delete()
+                return null
+            }
+            log
         } catch (_: Throwable) { null }
     }
 
     private fun clearIssueLog() {
         try { File(filesDir, MicUpApp.ISSUE_LOG_FILENAME).delete() } catch (_: Throwable) {}
     }
-
     private fun shareCrashLog(log: String) {
         try {
             val intent = Intent(Intent.ACTION_SEND).apply {
