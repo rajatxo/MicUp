@@ -2,5 +2,16 @@ name = "micup-signal"
 main = "server/worker.js"
 compatibility_date = "2024-10-01"
 
-# Stateless broadcast signaling server.
-# Free tier: 100k requests/day, unlimited WebSocket connections.
+# Durable Objects binding — one RoomObject instance per room code.
+# This is REQUIRED for stateful WebSocket broadcasting. Plain Workers
+# are stateless (each request can hit a different isolate), so the
+# rooms Map doesn't persist between connections. Durable Objects
+# solve this — every request for the same room name goes to the
+# SAME object instance.
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "RoomObject"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RoomObject"]

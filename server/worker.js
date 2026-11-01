@@ -1,29 +1,29 @@
 /**
- * MicUp Signaling Server — Cloudflare Worker
+ * MicUp Signaling Server — Cloudflare Worker + Durable Object
  *
- * Uses the CORRECT Cloudflare Workers WebSocket pattern:
- * - server.addEventListener('message', ...) DOES work, but only
- *   inside the fetch handler while the request is still open
- * - The trick: we MUST keep a reference and the response must be
- *   returned immediately to "accept" the WebSocket
- * - Then event listeners on the server socket fire normally
+ * WHY DURABLE OBJECTS:
+ * Plain Workers are stateless — the `rooms` Map doesn't persist between
+ * requests because each request can hit a different isolate. So two
+ * WebSocket connections to the "same" room might land in different
+ * isolates that don't share state, and messages never get broadcast.
  *
- * CRITICAL: This worker uses the "durable" pattern where we
- * immediately return the Response with the client WebSocket, and
- * the server WebSocket's event listeners handle all the logic.
+ * Durable Objects solve this: each room is a single Durable Object
+ * instance with persistent state. All WebSockets for a room connect
+ * to the SAME object, so broadcasting works.
+ *
+ * Free tier: 100k Durable Object requests/day — plenty for a friend group.
  */
 
-// Global Map of room code → Set of server-side WebScks
-const rooms = new Map();
-
+// ===== Worker entry point — routes requests to the right Durable Object =====
 export default {
-  async fetch(request) {
+  async fetch(request, env) {
     const upgrade = request.headers.get("Upgrade");
     if (upgrade !== "websocket") {
       return new Response(JSON.stringify({
         name: "MicUp Signaling Server",
         status: "ok",
-        usage: "Connect via WebSocket with ?room=ROOMCODE&peer=PEERID"
+        usage: "Connect via WebSocket with ?room=ROOMCODE&peer=PEERID",
+        protocol: "Durable Object broadcast — all sockets in same room see each other"
       }, null, 2), {
         status: 200,
         headers: { "Content-Type": "application/json" }
@@ -32,37 +32,52 @@ export default {
 
     const url = new URL(request.url);
     const room = (url.searchParams.get("room") || "default").toUpperCase();
-    const peer = url.searchParams.get("peer") || crypto.randomUUID();
 
-    // Get or create the room's socket set.
-    let sockets = rooms.get(room);
-    if (!sockets) {
-      sockets = new Set();
-      rooms.set(room, sockets);
-    }
+    // Get the Durable Object stub for this room.
+    // idFromName() ensures every request for the same room code
+    // hits the SAME Durable Object instance.
+    const id = env.ROOMS.idFromName(room);
+    const stub = env.ROOMS.get(id);
+
+    // Forward the WebSocket upgrade request to the Durable Object.
+    return stub.fetch(request);
+  }
+};
+
+// ===== Durable Object — one instance per room =====
+export class RoomObject {
+  constructor(state, env) {
+    this.state = state;
+    this.env = env;
+    // Set of all WebSockets connected to this room.
+    this.sessions = new Set();
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+    const peer = url.searchParams.get("peer") || crypto.randomUUID();
 
     // Create the WebSocket pair.
     const [client, server] = Object.values(new WebSocketPair());
 
-    // Tag this socket.
+    // Tag this socket with its peer ID.
     server.peerId = peer;
-    server.room = room;
 
-    // Add to room BEFORE accepting so other sockets can see us.
-    sockets.add(server);
+    // Add to sessions BEFORE accepting.
+    this.sessions.add(server);
 
-    // Accept the WebSocket — this must happen before returning.
+    // Accept the WebSocket.
     server.accept();
 
     // --- BROADCAST on message ---
     server.addEventListener("message", (event) => {
-      // Forward to all OTHER sockets in the same room.
-      for (const other of sockets) {
+      // Forward to all OTHER sockets in this room.
+      for (const other of this.sessions) {
         if (other !== server && other.readyState === 1) {
           try {
             other.send(event.data);
           } catch (e) {
-            // ignore — socket is broken
+            // ignore broken socket
           }
         }
       }
@@ -70,23 +85,17 @@ export default {
 
     // --- CLEANUP on close ---
     server.addEventListener("close", () => {
-      sockets.delete(server);
-      if (sockets.size === 0) {
-        rooms.delete(room);
-      }
+      this.sessions.delete(server);
     });
 
     server.addEventListener("error", () => {
-      sockets.delete(server);
-      if (sockets.size === 0) {
-        rooms.delete(room);
-      }
+      this.sessions.delete(server);
     });
 
-    // Return the client socket — this "completes" the upgrade.
+    // Return the client socket — completes the upgrade.
     return new Response(null, {
       status: 101,
       webSocket: client
     });
   }
-};
+}
