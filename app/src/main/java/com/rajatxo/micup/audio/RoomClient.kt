@@ -103,9 +103,11 @@ class RoomClient(private val context: Context) {
     fun createRoom(): kotlinx.coroutines.Job = scope.launch {
         val code = generateRoomCode()
         _state.value = RoomState.Connecting(code, isHost = true)
-        val engine = initEngineWithDetailedError()
+        // CRITICAL: Agora's RtcEngine.create() MUST be called on the main
+        // thread. On some devices (Realme, OnePlus), calling it from a
+        // background thread causes it to return null silently.
+        val engine = initEngineOnMainThread()
         if (engine == null) {
-            // Error state already set by initEngineWithDetailedError
             return@launch
         }
         val result = this@RoomClient.engine.joinChannel(code, 0)
@@ -119,13 +121,27 @@ class RoomClient(private val context: Context) {
     fun joinRoom(code: String): kotlinx.coroutines.Job = scope.launch {
         val upperCode = code.uppercase()
         _state.value = RoomState.Connecting(upperCode, isHost = false)
-        val engine = initEngineWithDetailedError()
+        val engine = initEngineOnMainThread()
         if (engine == null) {
             return@launch
         }
         val result = this@RoomClient.engine.joinChannel(upperCode, 0)
         if (result != 0) {
             _state.value = RoomState.Failed("Failed to join room (Agora error $result)")
+        }
+    }
+
+    /**
+     * Initialize Agora on the MAIN THREAD.
+     *
+     * Agora's RtcEngine.create() requires a Looper-equipped thread. When
+     * called from a background coroutine (Dispatchers.IO), it silently
+     * returns null on some devices (Realme UI, ColorOS). Switching to
+     * Dispatchers.Main fixes this.
+     */
+    private suspend fun initEngineOnMainThread(): RtcEngine? {
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+            initEngineWithDetailedError()
         }
     }
 
