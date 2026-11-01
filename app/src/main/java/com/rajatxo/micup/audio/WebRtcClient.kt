@@ -78,11 +78,33 @@ class WebRtcClient(
             audioTrack = factory!!.createAudioTrack("ARDAMS", audioSource)
             audioTrack!!.setEnabled(true)
 
-            // Create peer connection with STUN servers.
+            // Create peer connection with STUN + TURN servers.
+            // TURN is REQUIRED for mobile networks — carriers use symmetric
+            // NAT which STUN can't traverse. TURN relays the voice through
+            // a server when P2P fails.
+            //
+            // OpenRelay provides free TURN (100GB/month free):
+            // https://www.metered.ca/openrelay/
             val iceServers = listOf(
+                // Google STUN (free, no auth)
                 PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
                 PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
-                PeerConnection.IceServer.builder("stun:stun2.l.google.com:19302").createIceServer()
+                // OpenRelay TURN (free, 100GB/month) — relays voice when P2P fails
+                PeerConnection.IceServer.builder(
+                    "turn:openrelay.metered.ca:80"
+                ).setUsername("openrelayproject").setPassword(
+                    "openrelayproject"
+                ).createIceServer(),
+                PeerConnection.IceServer.builder(
+                    "turn:openrelay.metered.ca:443"
+                ).setUsername("openrelayproject").setPassword(
+                    "openrelayproject"
+                ).createIceServer(),
+                PeerConnection.IceServer.builder(
+                    "turn:openrelay.metered.ca:443?transport=tcp"
+                ).setUsername("openrelayproject").setPassword(
+                    "openrelayproject"
+                ).createIceServer()
             )
             val config = PeerConnection.RTCConfiguration(iceServers).apply {
                 sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
@@ -90,6 +112,9 @@ class WebRtcClient(
                 iceTransportsType = PeerConnection.IceTransportsType.ALL
                 bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
                 rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
+                // Enable ICE candidate gathering on all interfaces
+                // (needed for some mobile networks)
+                keyType = PeerConnection.KeyType.ECDSA
             }
 
             peerConnection = factory!!.createPeerConnection(config, object : PeerConnection.Observer {
