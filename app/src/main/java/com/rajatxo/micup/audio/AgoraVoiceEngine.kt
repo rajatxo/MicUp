@@ -8,22 +8,17 @@ import io.agora.rtc2.RtcEngine
 import io.agora.rtc2.RtcEngineConfig
 
 /**
- * Agora voice engine — initialization matches the OFFICIAL Agora
- * API-Examples repo exactly:
- * https://github.com/AgoraIO/API-Examples/blob/main/Android/APIExample/
- *   app/src/main/java/io/agora/api/example/examples/basic/JoinChannelVideo.java
+ * Agora voice engine — EXACT copy of the official Agora API-Examples
+ * initialization pattern.
  *
- * Key differences from our previous (broken) version:
- * 1. Uses full-sdk (not voice-sdk) — matches official example
- * 2. Sets mChannelProfile = CHANNEL_PROFILE_LIVE_BROADCASTING on config
- * 3. Sets mAudioScenario on config (not via setAudioProfile after)
- * 4. Uses context.applicationContext explicitly
- * 5. Catches Exception (not Throwable) — matches official pattern
+ * Source: https://github.com/AgoraIO/API-Examples/blob/main/Android/
+ *   APIExample/app/src/main/java/io/agora/api/example/examples/basic/
+ *   JoinChannelVideo.java
  *
- * The previous version was missing mChannelProfile, which caused
- * RtcEngine.create() to return null on some devices.
+ * We use AUDIO_SCENARIO_DEFAULT (not GAME_STREAMING) to match the
+ * official example exactly. Once create() succeeds, we can tune audio.
  */
-class AgoraVoiceEngine private constructor(private val context: Context) {
+class AgoraVoiceEngine private constructor(private val appContext: Context) {
 
     private var rtcEngine: RtcEngine? = null
 
@@ -39,24 +34,13 @@ class AgoraVoiceEngine private constructor(private val context: Context) {
 
         fun getInstance(context: Context): AgoraVoiceEngine {
             return instance ?: synchronized(this) {
+                // Store the applicationContext ONCE — don't call
+                // applicationContext again later (that was causing NPE).
                 instance ?: AgoraVoiceEngine(context.applicationContext).also { instance = it }
             }
         }
     }
 
-    /**
-     * Initialize Agora RtcEngine — copied from the official Agora example.
-     *
-     * The official pattern:
-     *   1. Create RtcEngineConfig
-     *   2. Set mContext = applicationContext
-     *   3. Set mAppId
-     *   4. Set mChannelProfile = CHANNEL_PROFILE_LIVE_BROADCASTING
-     *   5. Set mEventHandler
-     *   6. Set mAudioScenario
-     *   7. RtcEngine.create(config)
-     *   8. Catch Exception, printStackTrace
-     */
     fun init(handler: IRtcEngineEventHandler): RtcEngine? {
         if (rtcEngine != null) return rtcEngine
         lastError = null
@@ -64,6 +48,8 @@ class AgoraVoiceEngine private constructor(private val context: Context) {
         return try {
             val appId = com.rajatxo.micup.BuildConfig.AGORA_APP_ID
             Log.i(TAG, "init() — App ID: ${appId.take(8)}... (${appId.length} chars)")
+            Log.i(TAG, "init() — appContext: $appContext")
+            Log.i(TAG, "init() — appContext class: ${appContext.javaClass.name}")
 
             if (appId.isBlank() || appId.length != 32) {
                 lastError = "App ID format invalid (got ${appId.length} chars, expected 32)"
@@ -71,53 +57,44 @@ class AgoraVoiceEngine private constructor(private val context: Context) {
                 return null
             }
 
-            // Build the config EXACTLY like the official Agora example.
-            val config = RtcEngineConfig().apply {
-                mContext = context.applicationContext
-                mAppId = appId
-                // CRITICAL: must set mChannelProfile — without this,
-                // RtcEngine.create() returns null on some devices.
-                mChannelProfile = Constants.CHANNEL_PROFILE_LIVE_BROADCASTING
-                mEventHandler = handler
-                // AUDIO_SCENARIO_GAME_STREAMING → no ducking of game audio.
-                mAudioScenario = Constants.AUDIO_SCENARIO_GAME_STREAMING
-            }
+            // EXACT copy of official Agora example pattern.
+            val config = RtcEngineConfig()
+            config.mContext = appContext
+            config.mAppId = appId
+            config.mChannelProfile = Constants.CHANNEL_PROFILE_LIVE_BROADCASTING
+            config.mEventHandler = handler
+            // Use DEFAULT (not GAME_STREAMING) to match official example
+            // exactly. We'll switch to GAME_STREAMING once create() works.
+            config.mAudioScenario = Constants.AUDIO_SCENARIO_DEFAULT
 
-            Log.i(TAG, "Calling RtcEngine.create(config)...")
+            Log.i(TAG, "Config built — calling RtcEngine.create()...")
             val engine = RtcEngine.create(config)
             Log.i(TAG, "RtcEngine.create() returned: $engine")
 
             if (engine == null) {
-                lastError = "RtcEngine.create() returned null. " +
-                    "SDK v${getSdkVersion()}. " +
-                    "Check: 1) App ID is valid in console.agora.io " +
-                    "2) Internet is working " +
-                    "3) Agora project is activated"
+                lastError = "RtcEngine.create() returned null. SDK v${getSdkVersion()}."
                 Log.e(TAG, lastError!!)
                 return null
             }
 
-            // Set high-quality audio profile (128kbps Opus stereo).
-            // This is the no-ducking magic — AUDIO_SCENARIO_GAME_STREAMING
-            // was already set on the config, this adds MUSIC_HIGH_QUALITY.
+            // Now that create() succeeded, upgrade to high-quality audio.
+            // Using DEFAULT scenario for now to ensure stability.
             engine.setAudioProfile(
                 Constants.AUDIO_PROFILE_MUSIC_HIGH_QUALITY,
-                Constants.AUDIO_SCENARIO_GAME_STREAMING
+                Constants.AUDIO_SCENARIO_DEFAULT
             )
-
             engine.enableAudio()
 
             rtcEngine = engine
-            Log.i(TAG, "✓ Agora RtcEngine ready — MUSIC_HIGH_QUALITY + GAME_STREAMING")
+            Log.i(TAG, "✓ Agora RtcEngine ready")
             rtcEngine
         } catch (e: Exception) {
-            // Match the official example's error handling pattern.
             e.printStackTrace()
             lastError = "${e::class.java.simpleName}: ${e.message}"
             Log.e(TAG, "Agora init failed: $lastError", e)
             try {
-                val app = context.applicationContext as? com.rajatxo.micup.MicUpApp
-                app?.writeIssueLog("Agora init failed: $lastError", e)
+                (appContext as? com.rajatxo.micup.MicUpApp)
+                    ?.writeIssueLog("Agora init failed: $lastError", e)
             } catch (_: Throwable) {}
             null
         }
