@@ -207,10 +207,25 @@ private fun VoiceChatScreen() {
                                     iceState = state.name
                                     status = when (state) {
                                         PeerConnection.IceConnectionState.CHECKING -> "Connecting..."
-                                        PeerConnection.IceConnectionState.CONNECTED -> "✓ CONNECTED — speak now!"
-                                        PeerConnection.IceConnectionState.COMPLETED -> "✓ CONNECTED — speak now!"
-                                        PeerConnection.IceConnectionState.FAILED -> "Connection failed"
-                                        PeerConnection.IceConnectionState.DISCONNECTED -> "Disconnected"
+                                        PeerConnection.IceConnectionState.CONNECTED -> {
+                                            // START the foreground service when voice connects.
+                                            // This keeps the mic + WebRTC alive when the user
+                                            // backgrounds MicUp to open Free Fire.
+                                            com.rajatxo.micup.audio.VoiceService.start(appContext)
+                                            "✓ CONNECTED — speak now!"
+                                        }
+                                        PeerConnection.IceConnectionState.COMPLETED -> {
+                                            com.rajatxo.micup.audio.VoiceService.start(appContext)
+                                            "✓ CONNECTED — speak now!"
+                                        }
+                                        PeerConnection.IceConnectionState.FAILED -> {
+                                            com.rajatxo.micup.audio.VoiceService.stop(appContext)
+                                            "Connection failed"
+                                        }
+                                        PeerConnection.IceConnectionState.DISCONNECTED -> {
+                                            com.rajatxo.micup.audio.VoiceService.stop(appContext)
+                                            "Disconnected"
+                                        }
                                         else -> state.name
                                     }
                                 }
@@ -394,6 +409,7 @@ private fun VoiceChatScreen() {
                             .background(Color(0xFFFF6B6B))
                             .clickable {
                                 // Full reconnect — release old, start fresh
+                                com.rajatxo.micup.audio.VoiceService.stop(appContext)
                                 try { webRtc?.release() } catch (_: Throwable) {}
                                 try { signaling?.disconnect() } catch (_: Throwable) {}
                                 webRtc = null
@@ -448,6 +464,7 @@ private fun VoiceChatScreen() {
                                 .clip(CircleShape)
                                 .background(Color(0x22FF5252))
                                 .clickable {
+                                    com.rajatxo.micup.audio.VoiceService.stop(appContext)
                                     webRtc?.release()
                                     signaling?.disconnect()
                                     webRtc = null
