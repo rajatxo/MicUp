@@ -131,28 +131,29 @@ class RoomClient(private val context: Context) {
 
     /**
      * Initialize the Agora engine with detailed error reporting.
-     * If init fails, sets the RoomState to Failed with the actual error
-     * message (not just "init failed") so the user can tell us what went
-     * wrong.
+     * If init fails, sets the RoomState to Failed with the ACTUAL error
+     * message from AgoraVoiceEngine.lastError — not a generic message.
      */
     private fun initEngineWithDetailedError(): RtcEngine? {
         return try {
-            val engine = engine.init(eventHandler)
-            if (engine == null) {
+            val engineInstance = engine.init(eventHandler)
+            if (engineInstance == null) {
+                val realError = engine.lastError ?: "Unknown error"
                 _state.value = RoomState.Failed(
                     "Voice engine init failed.\n\n" +
-                    "This is usually caused by:\n" +
-                    "1. No internet connection\n" +
-                    "2. Agora App ID is invalid\n" +
-                    "3. Agora native libs failed to load\n\n" +
-                    "Try: Settings → Apps → MicUp → Force stop, then reopen."
+                    "ERROR: $realError\n\n" +
+                    "App ID: ${com.rajatxo.micup.BuildConfig.AGORA_APP_ID.take(8)}...\n" +
+                    "Phone: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}\n" +
+                    "Android: ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})\n\n" +
+                    "Take a screenshot of this and send to @rajat_xo on Telegram."
                 )
             }
-            engine
+            engineInstance
         } catch (t: Throwable) {
             _state.value = RoomState.Failed(
-                "Voice engine crashed during init: ${t.message}\n\n" +
-                "Stack: ${t.stackTraceToString().take(300)}"
+                "Voice engine crashed during init:\n\n" +
+                "${t::class.java.simpleName}: ${t.message}\n\n" +
+                "Stack: ${t.stackTraceToString().take(500)}"
             )
             null
         }

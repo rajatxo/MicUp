@@ -22,8 +22,8 @@ android {
         applicationId = "com.rajatxo.micup"
         minSdk = 21
         targetSdk = 35
-        versionCode = 20200
-        versionName = "2.0.2"
+        versionCode = 20300
+        versionName = "2.0.3"
         vectorDrawables { useSupportLibrary = true }
 
         // Agora App ID — baked into the APK via BuildConfig so the

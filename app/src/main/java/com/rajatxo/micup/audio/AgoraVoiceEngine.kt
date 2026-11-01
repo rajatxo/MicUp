@@ -29,6 +29,11 @@ class AgoraVoiceEngine private constructor(private val context: Context) {
 
     private var rtcEngine: RtcEngine? = null
 
+    /** The last error message from init() — used for debugging. */
+    @Volatile
+    var lastError: String? = null
+        private set
+
     companion object {
         private const val TAG = "MicUp/Agora"
 
@@ -49,40 +54,42 @@ class AgoraVoiceEngine private constructor(private val context: Context) {
      *  - AUDIO_PROFILE_MUSIC_HIGH_QUALITY: Opus 128kbps stereo (Telegram quality)
      *  - AUDIO_SCENARIO_GAME_STREAMING: OS treats us as a game sound → no ducking
      *
-     * AEC/NS/AGC are built into the AUDIO_PROFILE_MUSIC_HIGH_QUALITY preset
-     * — no need for separate setParameters calls (which were causing init
-     * failures because they reference extension SDKs we don't bundle).
-     *
-     * Returns the RtcEngine instance, or null on failure.
+     * Returns the RtcEngine instance, or null on failure. On failure,
+     * [lastError] contains the actual exception message for debugging.
      */
     fun init(handler: IRtcEngineEventHandler): RtcEngine? {
         if (rtcEngine != null) return rtcEngine
+        lastError = null
         return try {
             val config = RtcEngineConfig().apply {
                 mContext = context
                 mAppId = com.rajatxo.micup.BuildConfig.AGORA_APP_ID
                 mEventHandler = handler
             }
-            rtcEngine = RtcEngine.create(config)
+            val engine = RtcEngine.create(config)
 
             // THE MAGIC — set high-quality audio + game streaming scenario.
             // AEC3, NS, and AGC are all built into this preset.
-            rtcEngine?.setAudioProfile(
+            engine.setAudioProfile(
                 Constants.AUDIO_PROFILE_MUSIC_HIGH_QUALITY,
                 Constants.AUDIO_SCENARIO_GAME_STREAMING
             )
 
             // Enable audio module.
-            rtcEngine?.enableAudio()
+            engine.enableAudio()
 
+            rtcEngine = engine
             Log.i(TAG, "Agora RtcEngine ready — MUSIC_HIGH_QUALITY + GAME_STREAMING")
             rtcEngine
         } catch (t: Throwable) {
-            Log.e(TAG, "Agora init failed", t)
-            // Surface the actual error to the user via the Failed state.
-            // The RoomClient will pick this up and show it on the home screen.
+            // Capture the FULL error for debugging.
+            val errorMsg = "${t::class.java.simpleName}: ${t.message}"
+            lastError = errorMsg
+            Log.e(TAG, "Agora init failed: $errorMsg", t)
+            // Also write to the crash log so the user can share it.
             try {
-                com.rajatxo.micup.MicUpApp().writeIssueLog("Agora init failed", t)
+                val app = context.applicationContext as? com.rajatxo.micup.MicUpApp
+                app?.writeIssueLog("Agora init failed: $errorMsg", t)
             } catch (_: Throwable) {}
             null
         }
