@@ -1,6 +1,7 @@
 package com.rajatxo.micup.audio;
 
 import android.content.Context;
+import android.media.AudioAttributes;
 import org.webrtc.audio.JavaAudioDeviceModule;
 
 /**
@@ -15,8 +16,6 @@ import org.webrtc.audio.JavaAudioDeviceModule;
  *
  * Java resolves the class via the standard classpath without
  * going through Kotlin's metadata lookup, sidestepping the issue.
- *
- * Same pattern we used in MicUp v1.x which worked.
  */
 public final class AudioDeviceModuleBuilder {
 
@@ -40,6 +39,24 @@ public final class AudioDeviceModuleBuilder {
             builder.setSamplesReadyCallback(samplesCallback);
         }
         return builder.createAudioDeviceModule();
+    }
+
+    /**
+     * Switch audio output to the LOUDSPEAKER (main speaker, bottom of phone)
+     * instead of the earpiece (top speaker).
+     *
+     * By default WebRTC routes audio to the earpiece (like a phone call).
+     * For gaming voice chat, we want the loudspeaker so you can hear your
+     * squad clearly while playing.
+     */
+    public static void enableLoudspeaker(Context context) {
+        try {
+            android.media.AudioManager am = (android.media.AudioManager)
+                context.getSystemService(Context.AUDIO_SERVICE);
+            if (am != null) {
+                am.setSpeakerphoneOn(true);
+            }
+        } catch (Throwable ignored) {}
     }
 
     /**

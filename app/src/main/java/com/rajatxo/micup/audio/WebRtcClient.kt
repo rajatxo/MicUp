@@ -68,6 +68,12 @@ class WebRtcClient(
             // Build the AudioDeviceModule (mic + speaker).
             adm = AudioDeviceModuleBuilder.build(context, null)
 
+            // CRITICAL: Enable loudspeaker (main speaker, bottom of phone)
+            // instead of earpiece (top speaker, like a phone call).
+            // For gaming voice chat, we want the loudspeaker so you can
+            // hear your squad clearly while playing.
+            AudioDeviceModuleBuilder.enableLoudspeaker(context)
+
             // Create the factory.
             factory = PeerConnectionFactory.builder()
                 .setAudioDeviceModule(adm!!)

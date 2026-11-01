@@ -250,29 +250,39 @@ private fun VoiceChatScreen() {
                                     status = "Waiting for peer..."
                                     isConnected = true
                                     isConnecting = false
-                                    // Announce ourselves
+                                    // Announce ourselves to the room.
+                                    // The server broadcasts this to ALL other sockets in the room.
                                     signaling?.send(SignalingMessage.Hello(myPeerId, "Player"))
                                 }
                                 override fun onMessage(message: SignalingMessage) {
                                     when (message) {
                                         is SignalingMessage.Hello -> {
                                             remotePeerId = message.from
-                                            // Perfect negotiation: lower peer ID is the caller
+                                            // Determine caller/callee role based on peer ID comparison.
+                                            // Lower peer ID = caller (creates the offer).
+                                            // This ensures EXACTLY ONE phone creates the offer,
+                                            // regardless of who joined first.
                                             val shouldBeCaller = myPeerId < message.from
                                             if (isCaller == null) {
                                                 isCaller = shouldBeCaller
-                                                if (shouldBeCaller && !makingOffer) {
-                                                    makingOffer = true
-                                                    status = "Creating offer..."
-                                                    webRtc?.createOffer()
-                                                }
+                                                status = if (shouldBeCaller) "Creating offer..." else "Waiting for offer..."
+                                            }
+                                            // Only the caller creates the offer, and only ONCE.
+                                            if (shouldBeCaller && !makingOffer && !hasCreatedOffer) {
+                                                makingOffer = true
+                                                hasCreatedOffer = true
+                                                status = "Creating offer..."
+                                                webRtc?.createOffer()
                                             }
                                         }
                                         is SignalingMessage.Offer -> {
                                             remotePeerId = message.from
+                                            // We received an offer — we must be the callee.
+                                            if (isCaller == null) {
+                                                isCaller = false
+                                            }
                                             // Perfect negotiation: handle glare
-                                            val readyForOffer = !makingOffer && (webRtc?.signalingState() != "have-local-offer")
-                                            val offerCollision = !readyForOffer
+                                            val offerCollision = makingOffer || (webRtc?.signalingState() == "have-local-offer")
                                             val polite = isCaller == false // callee is polite
 
                                             ignoreOffer = !polite && offerCollision
@@ -280,7 +290,6 @@ private fun VoiceChatScreen() {
 
                                             // If we have a local offer (glare), rollback first
                                             if (offerCollision) {
-                                                // Polite peer: rollback our offer
                                                 webRtc?.rollbackOffer()
                                             }
 
