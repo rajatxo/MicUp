@@ -82,6 +82,23 @@ public final class AudioDeviceModuleBuilder {
     }
 
     /**
+     * Aggressively force loudspeaker on. Called when ICE connects.
+     * Some phones need this called AFTER the audio track is active
+     * for the routing to take effect.
+     */
+    public static void forceLoudspeakerOn(Context context) {
+        try {
+            android.media.AudioManager am = (android.media.AudioManager)
+                context.getSystemService(Context.AUDIO_SERVICE);
+            if (am != null) {
+                am.setSpeakerphoneOn(false);
+                am.setSpeakerphoneOn(true);
+                am.setMode(AudioManager.MODE_NORMAL);
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    /**
      * Release the AudioDeviceModule. Safe to call on null.
      */
     public static void release(Object adm) {

@@ -124,6 +124,12 @@ class WebRtcClient(
 
             override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
                 Log.i(TAG, "[$remotePeerId] ICE state: $state")
+                // Force loudspeaker on when ANY peer connects — some OEM ROMs
+                // need this called AFTER the audio track is streaming.
+                if (state == PeerConnection.IceConnectionState.CONNECTED ||
+                    state == PeerConnection.IceConnectionState.COMPLETED) {
+                    AudioDeviceModuleBuilder.forceLoudspeakerOn(context)
+                }
                 state?.let { listener.onPeerIceStateChanged(remotePeerId, it) }
             }
 
