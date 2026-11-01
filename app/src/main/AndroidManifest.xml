@@ -2,30 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- MicUp needs RECORD_AUDIO for voice chat. We NEVER request
-         MODIFY_AUDIO_SETTINGS because that lets apps duck other audio.
-         We use MODE_NORMAL + USAGE_GAME so the OS treats our voice
-         like a game sound effect, not a phone call. -->
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Step 1: only INTERNET needed (WebRTC SDK init may phone home).
+         Mic permission comes in Step 2. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!-- FOREGROUND_SERVICE_MICROPHONE was added in Android 14 (API 34).
-         On older versions the system simply ignores it, but we use
-         maxSdkVersion to be explicit and avoid any Lint warnings. -->
-    <uses-permission
-        android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"
-        android:minSdkVersion="34" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-
-    <uses-feature android:name="android.hardware.microphone" android:required="true" />
 
     <application
-        android:name=".MicUpApp"
         android:allowBackup="false"
-        android:dataExtractionRules="@xml/data_extraction_rules"
-        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -47,13 +30,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <!-- Foreground service keeps the mic + WebRTC peer connection alive
-             when the user backgrounds the app to open a game. -->
-        <service
-            android:name=".audio.VoiceService"
-            android:exported="false"
-            android:foregroundServiceType="microphone" />
     </application>
 
 </manifest>

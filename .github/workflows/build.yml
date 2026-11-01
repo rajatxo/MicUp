@@ -1,4 +1,4 @@
-name: Build MicUp APK
+name: Build MicUp Step 1
 
 on:
   push:
@@ -57,29 +57,21 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
-    - name: Build release APK (arm64-only, minified)
+    - name: Build release APK
       run: ./gradlew :app:assembleRelease --no-daemon --max-workers=2
 
     - name: Get version info
       id: version
       run: |
-        VERSION_CODE=$(grep 'versionCode' app/build.gradle.kts | head -1 | sed 's/.*= *//; s/ *//' | tr -d '"')
         VERSION_NAME=$(grep 'versionName' app/build.gradle.kts | head -1 | sed 's/.*= *"//; s/".*//')
-        echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
         echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
-        echo "Version: $VERSION_NAME (code: $VERSION_CODE)"
 
     - name: Rename release APK
       run: |
         VERSION_NAME=${{ steps.version.outputs.version_name }}
         APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
-        if [ -n "$APK" ]; then
-          cp "$APK" "MicUp-v${VERSION_NAME}.apk"
-          ls -lh "MicUp-v${VERSION_NAME}.apk"
-        else
-          echo "ERROR: No release APK found"
-          exit 1
-        fi
+        cp "$APK" "MicUp-${VERSION_NAME}.apk"
+        ls -lh "MicUp-${VERSION_NAME}.apk"
 
     - name: Delete previous 'latest' release
       run: |
@@ -87,19 +79,24 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Publish release APK as GitHub Release
+    - name: Publish release APK
       run: |
         VERSION_NAME=${{ steps.version.outputs.version_name }}
         gh release create latest \
-          "MicUp-v${VERSION_NAME}.apk" \
-          --title "MicUp v${VERSION_NAME}" \
-          --notes "## Download
+          "MicUp-${VERSION_NAME}.apk" \
+          --title "MicUp ${VERSION_NAME}" \
+          --notes "## Step 1: WebRTC Load Test
 
-        Download \`MicUp-v${VERSION_NAME}.apk\` below — it's ~40MB (arm64-only, works on every phone from 2017+).
+        This build ONLY tests whether the WebRTC native library loads on your phone.
 
-        **If install fails:** uninstall any previous MicUp first, then install this one. After v2.0.0, all future updates install cleanly without uninstalling.
+        **What to do:**
+        1. Install the APK
+        2. Open it — you'll see a single screen
+        3. It shows either:
+           - ✅ 'WebRTC loaded ✓' (Step 1 PASSED)
+           - ❌ 'WebRTC FAILED ✗' with the exact error (send me a screenshot)
 
-        Direct APK download — no zip, no extraction needed." \
+        **Don't expect anything else** — no rooms, no mic, no UI. Just a load test." \
           --latest
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
