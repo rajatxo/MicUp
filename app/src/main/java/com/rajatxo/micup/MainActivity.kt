@@ -1,13 +1,16 @@
 package com.rajatxo.micup
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,6 +31,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -57,6 +65,7 @@ import androidx.core.view.WindowCompat
 import com.rajatxo.micup.audio.SignalingClient
 import com.rajatxo.micup.audio.SignalingMessage
 import com.rajatxo.micup.audio.WebRtcClient
+import com.rajatxo.micup.data.MicUpPrefs
 import org.webrtc.IceCandidate
 import org.webrtc.PeerConnection
 
@@ -68,22 +77,28 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContent {
             MaterialTheme {
-                VoiceChatScreen()
+                App()
             }
         }
     }
 }
 
-data class Participant(
-    val peerId: String,
-    val name: String,
-    val iceState: String = "new"
-)
+@Composable
+private fun App() {
+    var screen by remember { mutableStateOf("home") }
+    when (screen) {
+        "home" -> HomeScreen(onOpenSettings = { screen = "settings" })
+        "settings" -> SettingsScreen(onBack = { screen = "home" })
+    }
+}
+
+// ==================== HOME SCREEN ====================
 
 @Composable
-private fun VoiceChatScreen() {
+private fun HomeScreen(onOpenSettings: () -> Unit) {
     val context = LocalContext.current
     val appContext = context.applicationContext
+    val prefs = remember { MicUpPrefs(context) }
 
     var hasMicPermission by remember {
         mutableStateOf(
@@ -98,8 +113,9 @@ private fun VoiceChatScreen() {
         if (!hasMicPermission) permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
 
+    var playerName by remember { mutableStateOf(prefs.playerName) }
     var roomCode by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf("Enter a 5-char room code") }
+    var status by remember { mutableStateOf("Enter a room code to start") }
     var isConnected by remember { mutableStateOf(false) }
     var isConnecting by remember { mutableStateOf(false) }
     var isMuted by remember { mutableStateOf(false) }
@@ -109,7 +125,6 @@ private fun VoiceChatScreen() {
         (1..8).map { "abcdefghijklmnopqrstuvwxyz0123456789".random() }.joinToString("")
     }
 
-    // Participant list (excluding self)
     val participants = remember { mutableStateOf<List<Participant>>(emptyList()) }
 
     var signaling by remember { mutableStateOf<SignalingClient?>(null) }
@@ -132,13 +147,32 @@ private fun VoiceChatScreen() {
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("MicUp", color = Color(0xFFFF6B6B), fontSize = 28.sp, fontWeight = FontWeight.Bold)
-            Text("Step 10 — Multi-Peer Voice", color = Color(0xFF888888), fontSize = 12.sp)
+            // Top bar: title + settings icon
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("MicUp", color = Color(0xFFFF6B6B), fontSize = 28.sp, fontWeight = FontWeight.Bold)
+                    Text("Voice rooms that never duck your game", color = Color(0xFF888888), fontSize = 11.sp)
+                }
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(Color(0x1AFFFFFF))
+                        .clickable { onOpenSettings() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = Color.White, modifier = Modifier.size(20.dp))
+                }
+            }
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(32.dp))
 
             if (!hasMicPermission) {
-                Text("Need mic permission", color = Color(0xFFFF5252), fontSize = 14.sp)
+                Text("Microphone permission needed", color = Color(0xFFFF5252), fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(8.dp))
                 Box(
                     modifier = Modifier
@@ -150,7 +184,38 @@ private fun VoiceChatScreen() {
                     Text("Grant permission", color = Color.Black, fontWeight = FontWeight.SemiBold)
                 }
             } else if (!isConnected && !isConnecting) {
-                Text("Room Code", color = Color(0xFF888888), fontSize = 12.sp)
+                // Name input
+                Text("Your Name", color = Color(0xFF888888), fontSize = 12.sp, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(8.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0x14FFFFFF))
+                        .padding(horizontal = 16.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    if (playerName.isEmpty()) {
+                        Text("Enter your name", color = Color(0xFF666666), fontSize = 16.sp)
+                    }
+                    BasicTextField(
+                        value = playerName,
+                        onValueChange = {
+                            playerName = it.take(20)
+                            prefs.playerName = it.take(20)
+                        },
+                        singleLine = true,
+                        cursorBrush = SolidColor(Color(0xFFFF6B6B)),
+                        textStyle = TextStyle(color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                Spacer(Modifier.height(20.dp))
+
+                // Room code input
+                Text("Room Code", color = Color(0xFF888888), fontSize = 12.sp, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(8.dp))
                 Box(
                     modifier = Modifier
@@ -169,22 +234,15 @@ private fun VoiceChatScreen() {
                         onValueChange = { roomCode = it.take(5).filter { c -> c.isLetterOrDigit() }.uppercase() },
                         singleLine = true,
                         cursorBrush = SolidColor(Color(0xFFFF6B6B)),
-                        textStyle = TextStyle(
-                            color = Color.White, fontSize = 22.sp,
-                            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold,
-                            letterSpacing = 6.sp
-                        ),
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Ascii,
-                            capitalization = KeyboardCapitalization.Characters
-                        ),
+                        textStyle = TextStyle(color = Color.White, fontSize = 22.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold, letterSpacing = 6.sp),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, capitalization = KeyboardCapitalization.Characters),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
 
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(24.dp))
 
-                val canConnect = roomCode.length == 5
+                val canConnect = roomCode.length == 5 && playerName.isNotBlank()
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -194,7 +252,7 @@ private fun VoiceChatScreen() {
                         .clickable(enabled = canConnect) {
                             isConnecting = true
                             errorMessage = null
-                            status = "Connecting to signaling..."
+                            status = "Connecting..."
                             participants.value = emptyList()
 
                             val rtc = WebRtcClient(appContext, myPeerId, object : WebRtcClient.Listener {
@@ -205,25 +263,22 @@ private fun VoiceChatScreen() {
                                     }
                                     val connectedCount = participants.value.count { it.iceState == "CONNECTED" || it.iceState == "COMPLETED" }
                                     status = when (state) {
-                                        PeerConnection.IceConnectionState.CHECKING -> "Connecting to ${peerId.take(4)}..."
+                                        PeerConnection.IceConnectionState.CHECKING -> "Connecting to friend..."
                                         PeerConnection.IceConnectionState.CONNECTED -> {
                                             if (connectedCount >= 1) com.rajatxo.micup.audio.VoiceService.start(appContext)
-                                            "✓ Connected (${connectedCount + 1} in room)"
+                                            "✓ Connected"
                                         }
                                         PeerConnection.IceConnectionState.COMPLETED -> {
                                             if (connectedCount >= 1) com.rajatxo.micup.audio.VoiceService.start(appContext)
-                                            "✓ Connected (${connectedCount + 1} in room)"
+                                            "✓ Connected"
                                         }
-                                        PeerConnection.IceConnectionState.FAILED -> "Connection to ${peerId.take(4)} failed"
-                                        PeerConnection.IceConnectionState.DISCONNECTED -> "${peerId.take(4)} disconnected"
+                                        PeerConnection.IceConnectionState.FAILED -> "Connection failed"
+                                        PeerConnection.IceConnectionState.DISCONNECTED -> "Friend disconnected"
                                         else -> stateName
                                     }
                                 }
                                 override fun onIceCandidateForPeer(peerId: String, candidate: IceCandidate) {
-                                    signaling?.send(SignalingMessage.Ice(
-                                        myPeerId, peerId,
-                                        candidate.sdp, candidate.sdpMid, candidate.sdpMLineIndex
-                                    ))
+                                    signaling?.send(SignalingMessage.Ice(myPeerId, peerId, candidate.sdp, candidate.sdpMid, candidate.sdpMLineIndex))
                                 }
                                 override fun onOfferReadyForPeer(peerId: String, sdp: String) {
                                     signaling?.send(SignalingMessage.Offer(myPeerId, peerId, sdp))
@@ -232,7 +287,7 @@ private fun VoiceChatScreen() {
                                     signaling?.send(SignalingMessage.Answer(myPeerId, peerId, sdp))
                                 }
                                 override fun onPeerError(peerId: String, message: String) {
-                                    errorMessage = "[$peerId] $message"
+                                    errorMessage = message
                                 }
                             })
 
@@ -246,27 +301,25 @@ private fun VoiceChatScreen() {
 
                             val sig = SignalingClient(SIGNALING_URL, object : SignalingClient.Listener {
                                 override fun onConnected() {
-                                    status = "Waiting for peers..."
+                                    status = "Waiting for friends..."
                                     isConnected = true
                                     isConnecting = false
-                                    signaling?.send(SignalingMessage.Hello(myPeerId, "Player"))
+                                    signaling?.send(SignalingMessage.Hello(myPeerId, playerName))
                                 }
                                 override fun onMessage(message: SignalingMessage) {
                                     when (message) {
                                         is SignalingMessage.Hello -> {
-                                            // New peer announced — add to participant list + create peer connection
                                             if (message.from != myPeerId && participants.value.none { it.peerId == message.from }) {
-                                                participants.value = participants.value + Participant(message.from, message.name)
+                                                val name = if (message.name.isNotBlank() && message.name != message.from) message.name else "Friend"
+                                                participants.value = participants.value + Participant(message.from, name)
                                                 val isNew = webRtc?.addPeer(message.from) ?: false
-                                                if (isNew) {
-                                                    webRtc?.maybeCreateOffer(message.from)
-                                                }
+                                                if (isNew) webRtc?.maybeCreateOffer(message.from)
                                             }
                                         }
                                         is SignalingMessage.Offer -> {
-                                            // Make sure we have a peer connection for this peer
                                             if (participants.value.none { it.peerId == message.from }) {
-                                                participants.value = participants.value + Participant(message.from, message.from.take(6))
+                                                val name = "Friend"
+                                                participants.value = participants.value + Participant(message.from, name)
                                                 webRtc?.addPeer(message.from)
                                             }
                                             webRtc?.handleRemoteOffer(message.from, message.sdp)
@@ -307,45 +360,43 @@ private fun VoiceChatScreen() {
 
                 Spacer(Modifier.height(16.dp))
                 Text(
-                    "All players enter the SAME room code.\nMax 4 players per room.\n~60 MB/hour per phone.",
+                    "Share the room code with your friends.\nMax 4 friends per room · ~60 MB/hour",
                     color = Color(0xFF888888), fontSize = 11.sp, textAlign = TextAlign.Center
                 )
-            } else {
-                // Connected view
-                Text(status, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
 
                 errorMessage?.let {
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(12.dp))
                     Text(it, color = Color(0xFFFF5252), fontSize = 10.sp, fontFamily = FontFamily.Monospace,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0x22FF5252))
-                            .padding(8.dp))
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0x22FF5252)).padding(8.dp))
                 }
-
+            } else if (isConnecting) {
+                // Connecting view
+                Spacer(Modifier.height(40.dp))
+                Text(status, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
+                Spacer(Modifier.height(24.dp))
+                Box(modifier = Modifier.size(100.dp).clip(CircleShape).background(Color(0x22F4B400)), contentAlignment = Alignment.Center) {
+                    Box(modifier = Modifier.size(60.dp).clip(CircleShape).background(Color(0xFFF4B400)))
+                }
+            } else {
+                // Connected view
+                Text(status, color = Color(0xFF4ADE80), fontSize = 16.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(20.dp))
 
-                // Participant list
-                Text("SQUAD (${participants.value.size + 1})", color = Color(0xFF888888), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                Text("FRIENDS (${participants.value.size + 1})", color = Color(0xFF888888), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(8.dp))
 
                 LazyColumn(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Self
-                    item {
-                        ParticipantRow("You", "connected", true)
-                    }
-                    // Remote participants
+                    item { ParticipantRow(playerName.ifBlank { "You" }, "connected", true) }
                     items(participants.value) { p ->
-                        ParticipantRow(p.name.ifEmpty { p.peerId.take(6) }, p.iceState, false)
+                        ParticipantRow(p.name, p.iceState, false)
                     }
                 }
 
                 Spacer(Modifier.height(16.dp))
 
-                // Mute + Leave buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(16.dp)
@@ -383,7 +434,7 @@ private fun VoiceChatScreen() {
                                     isConnected = false
                                     isConnecting = false
                                     participants.value = emptyList()
-                                    status = "Enter a 5-char room code"
+                                    status = "Enter a room code to start"
                                     isMuted = false
                                 },
                             contentAlignment = Alignment.Center
@@ -399,6 +450,116 @@ private fun VoiceChatScreen() {
     }
 }
 
+// ==================== SETTINGS SCREEN ====================
+
+@Composable
+private fun SettingsScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .padding(24.dp)
+        ) {
+            // Top bar with back button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(Color(0x1AFFFFFF))
+                        .clickable { onBack() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = Color.White, modifier = Modifier.size(20.dp))
+                }
+                Spacer(Modifier.width(12.dp))
+                Text("Settings", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Spacer(Modifier.height(32.dp))
+
+            // About card
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color(0x1AFFFFFF))
+                    .padding(24.dp)
+            ) {
+                Text("MicUp", color = Color(0xFFFF6B6B), fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+                Text("Version 3.7.1", color = Color(0xFF888888), fontSize = 12.sp)
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    "Voice rooms that never duck your game sound. " +
+                    "Built for gamers who want crisp squad comms " +
+                    "alongside full-volume gameplay audio.",
+                    color = Color(0xFFCCCCCC), fontSize = 13.sp, lineHeight = 18.sp
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // Developer card
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color(0x1AFFFFFF))
+                    .padding(24.dp)
+            ) {
+                Text("Developer", color = Color(0xFF888888), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(context.getString(R.string.developer_telegram)))
+                            context.startActivity(intent)
+                        }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFFF6B6B).copy(alpha = 0.2f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Filled.Person, contentDescription = null, tint = Color(0xFFFF6B6B), modifier = Modifier.size(20.dp))
+                    }
+                    Spacer(Modifier.width(16.dp))
+                    Column {
+                        Text("Rajat", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        Text("@rajat_xo on Telegram", color = Color(0xFF888888), fontSize = 12.sp)
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Text("→", color = Color(0xFF888888), fontSize = 18.sp)
+                }
+            }
+
+            Spacer(Modifier.weight(1f))
+
+            // Footer
+            Text("Made with love in India", color = Color(0xFF666666), fontSize = 11.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        }
+    }
+}
+
+// ==================== SHARED COMPONENTS ====================
+
+data class Participant(
+    val peerId: String,
+    val name: String,
+    val iceState: String = "new"
+)
+
 @Composable
 private fun ParticipantRow(name: String, iceState: String, isSelf: Boolean) {
     val stateColor = when (iceState.lowercase()) {
@@ -410,14 +571,14 @@ private fun ParticipantRow(name: String, iceState: String, isSelf: Boolean) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(14.dp))
             .background(Color(0x1AFFFFFF))
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             modifier = Modifier
-                .size(40.dp)
+                .size(42.dp)
                 .clip(CircleShape)
                 .background(stateColor.copy(alpha = 0.2f)),
             contentAlignment = Alignment.Center
@@ -429,7 +590,7 @@ private fun ParticipantRow(name: String, iceState: String, isSelf: Boolean) {
                 fontWeight = FontWeight.Bold
             )
         }
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 if (isSelf) "$name (You)" else name,
@@ -438,7 +599,13 @@ private fun ParticipantRow(name: String, iceState: String, isSelf: Boolean) {
                 fontWeight = FontWeight.Medium
             )
             Text(
-                if (isSelf) "Connected" else iceState,
+                when {
+                    isSelf -> "Connected"
+                    iceState.lowercase() == "connected" || iceState.lowercase() == "completed" -> "Connected"
+                    iceState.lowercase() == "checking" -> "Connecting..."
+                    iceState.lowercase() == "failed" -> "Failed"
+                    else -> "Waiting..."
+                },
                 color = stateColor,
                 fontSize = 11.sp
             )

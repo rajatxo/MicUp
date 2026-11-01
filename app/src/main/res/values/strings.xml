@@ -1,13 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">MicUp</string>
-    <string name="made_in_india">Made with love in India</string>
     <string name="developer_telegram">https://t.me/rajat_xo</string>
-    <string name="support_group">https://t.me/coralmusicsupport</string>
-
-    <!-- Voice service notification -->
-    <string name="notif_channel_voice">Voice Room</string>
-    <string name="notif_channel_voice_desc">Shows when you\'re in a voice room so the mic stays alive in the background.</string>
-    <string name="notif_voice_title">MicUp — Voice Room</string>
-    <string name="notif_voice_text">Connected · Tap to return</string>
 </resources>
