@@ -107,6 +107,13 @@ private fun VoiceChatScreen() {
     }
     var remotePeerId by remember { mutableStateOf<String?>(null) }
 
+    // Perfect negotiation state
+    // isCaller = true means this phone creates the offer
+    // Determined by peer ID comparison: lower ID = caller
+    var isCaller by remember { mutableStateOf<Boolean?>(null) }
+    var makingOffer by remember { mutableStateOf(false) }
+    var ignoreOffer by remember { mutableStateOf(false) }
+
     // Holders for cleanup
     var signaling by remember { mutableStateOf<SignalingClient?>(null) }
     var webRtc by remember { mutableStateOf<WebRtcClient?>(null) }
@@ -118,7 +125,6 @@ private fun VoiceChatScreen() {
             try { signaling?.disconnect() } catch (_: Throwable) {}
         }
     }
-
     Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
         Column(
             modifier = Modifier
@@ -217,6 +223,7 @@ private fun VoiceChatScreen() {
                                     ))
                                 }
                                 override fun onOfferReady(sdp: String) {
+                                    makingOffer = false
                                     signaling?.send(SignalingMessage.Offer(myPeerId, sdp))
                                 }
                                 override fun onAnswerReady(sdp: String) {
@@ -250,20 +257,39 @@ private fun VoiceChatScreen() {
                                     when (message) {
                                         is SignalingMessage.Hello -> {
                                             remotePeerId = message.from
-                                            // Tie-break: lower peer ID creates the offer
-                                            if (myPeerId < message.from && !hasCreatedOffer) {
-                                                hasCreatedOffer = true
-                                                status = "Creating offer..."
-                                                webRtc?.createOffer()
+                                            // Perfect negotiation: lower peer ID is the caller
+                                            val shouldBeCaller = myPeerId < message.from
+                                            if (isCaller == null) {
+                                                isCaller = shouldBeCaller
+                                                if (shouldBeCaller && !makingOffer) {
+                                                    makingOffer = true
+                                                    status = "Creating offer..."
+                                                    webRtc?.createOffer()
+                                                }
                                             }
                                         }
                                         is SignalingMessage.Offer -> {
                                             remotePeerId = message.from
+                                            // Perfect negotiation: handle glare
+                                            val readyForOffer = !makingOffer && (webRtc?.signalingState() != "have-local-offer")
+                                            val offerCollision = !readyForOffer
+                                            val polite = isCaller == false // callee is polite
+
+                                            ignoreOffer = !polite && offerCollision
+                                            if (ignoreOffer) return
+
+                                            // If we have a local offer (glare), rollback first
+                                            if (offerCollision) {
+                                                // Polite peer: rollback our offer
+                                                webRtc?.rollbackOffer()
+                                            }
+
                                             status = "Received offer, creating answer..."
                                             webRtc?.setRemoteDescription(SessionDescription.Type.OFFER, message.sdp)
                                             webRtc?.createAnswer()
                                         }
                                         is SignalingMessage.Answer -> {
+                                            if (ignoreOffer) return
                                             status = "Received answer, connecting..."
                                             webRtc?.setRemoteDescription(SessionDescription.Type.ANSWER, message.sdp)
                                         }
@@ -368,6 +394,9 @@ private fun VoiceChatScreen() {
                                 iceState = ""
                                 errorMessage = null
                                 hasCreatedOffer = false
+                                isCaller = null
+                                makingOffer = false
+                                ignoreOffer = false
                                 status = "Enter a 5-char room code"
                             }
                             .padding(horizontal = 24.dp),
@@ -420,6 +449,9 @@ private fun VoiceChatScreen() {
                                     status = "Enter a 5-char room code"
                                     remotePeerId = null
                                     hasCreatedOffer = false
+                                    isCaller = null
+                                    makingOffer = false
+                                    ignoreOffer = false
                                 },
                             contentAlignment = Alignment.Center
                         ) {

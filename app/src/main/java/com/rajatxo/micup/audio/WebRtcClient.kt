@@ -174,7 +174,16 @@ class WebRtcClient(
         peerConnection?.createOffer(object : SdpObserver {
             override fun onCreateSuccess(sdp: SessionDescription?) {
                 val desc = sdp ?: return
-                peerConnection?.setLocalDescription(SimpleSdpObserver(), desc)
+                peerConnection?.setLocalDescription(object : SdpObserver {
+                    override fun onSetSuccess() {
+                        Log.i(TAG, "Local description (offer) set")
+                    }
+                    override fun onCreateSuccess(p0: SessionDescription?) {}
+                    override fun onCreateFailure(p0: String?) {}
+                    override fun onSetFailure(p0: String?) {
+                        Log.e(TAG, "setLocalDescription failed: $p0")
+                    }
+                }, desc)
                 listener.onOfferReady(desc.description)
             }
             override fun onSetSuccess() {}
@@ -191,7 +200,16 @@ class WebRtcClient(
         peerConnection?.createAnswer(object : SdpObserver {
             override fun onCreateSuccess(sdp: SessionDescription?) {
                 val desc = sdp ?: return
-                peerConnection?.setLocalDescription(SimpleSdpObserver(), desc)
+                peerConnection?.setLocalDescription(object : SdpObserver {
+                    override fun onSetSuccess() {
+                        Log.i(TAG, "Local description (answer) set")
+                    }
+                    override fun onCreateSuccess(p0: SessionDescription?) {}
+                    override fun onCreateFailure(p0: String?) {}
+                    override fun onSetFailure(p0: String?) {
+                        Log.e(TAG, "setLocalDescription failed: $p0")
+                    }
+                }, desc)
                 listener.onAnswerReady(desc.description)
             }
             override fun onSetSuccess() {}
@@ -200,6 +218,31 @@ class WebRtcClient(
             }
             override fun onSetFailure(error: String?) {}
         }, MediaConstraints())
+    }
+
+    /** Rollback the local offer (for perfect negotiation glare handling). */
+    fun rollbackOffer() {
+        Log.i(TAG, "Rolling back local offer (glare resolution)")
+        try {
+            // Create a rollback SDP (empty description with ROLLBACK type)
+            peerConnection?.setLocalDescription(object : SdpObserver {
+                override fun onSetSuccess() {
+                    Log.i(TAG, "Rollback successful")
+                }
+                override fun onCreateSuccess(p0: SessionDescription?) {}
+                override fun onCreateFailure(p0: String?) {}
+                override fun onSetFailure(p0: String?) {
+                    Log.e(TAG, "Rollback failed: $p0")
+                }
+            }, SessionDescription(SessionDescription.Type.ROLLBACK, ""))
+        } catch (t: Throwable) {
+            Log.e(TAG, "Rollback exception", t)
+        }
+    }
+
+    /** Get the current signaling state as a string. */
+    fun signalingState(): String {
+        return peerConnection?.signalingState()?.name?.lowercase() ?: "closed"
     }
 
     /** Set the remote SDP (offer or answer). Flushes buffered ICE candidates. */
