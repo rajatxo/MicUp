@@ -28,10 +28,10 @@ androidx-navigation-compose = { group = "androidx.navigation", name = "navigatio
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "kotlinxCoroutines" }
 
-# Agora voice SDK — what Free Fire uses for in-game voice.
-# We use it with MUSIC_HIGH_QUALITY + GAME_STREAMING audio scenario
-# for Telegram-quality audio that doesn't duck game sounds.
-agora-voice-sdk = { group = "io.agora.rtc", name = "voice-sdk", version.ref = "agora" }
+# Agora full SDK — the official Agora API-Examples repo uses full-sdk,
+# not voice-sdk. voice-sdk was returning null on create() on Realme.
+# full-sdk is larger but battle-tested.
+agora-voice-sdk = { group = "io.agora.rtc", name = "full-sdk", version.ref = "agora" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
