@@ -65,14 +65,15 @@ class WebRtcClient(
                     .createInitializationOptions()
             )
 
-            // Build the AudioDeviceModule (mic + speaker).
+            // Build the AudioDeviceModule with NO-DUCKING audio attributes.
+            // USAGE_GAME = OS treats us as a game sound → no ducking.
             adm = AudioDeviceModuleBuilder.build(context, null)
 
-            // CRITICAL: Enable loudspeaker (main speaker, bottom of phone)
-            // instead of earpiece (top speaker, like a phone call).
-            // For gaming voice chat, we want the loudspeaker so you can
-            // hear your squad clearly while playing.
-            AudioDeviceModuleBuilder.enableLoudspeaker(context)
+            // CRITICAL NO-DUCKING TRICK:
+            // 1. Enable loudspeaker (bottom speaker, not earpiece)
+            // 2. Force MODE_NORMAL (NOT MODE_IN_COMMUNICATION)
+            // This prevents Android from ducking game audio.
+            AudioDeviceModuleBuilder.enableLoudspeakerAndNoDucking(context)
 
             // Create the factory.
             factory = PeerConnectionFactory.builder()
