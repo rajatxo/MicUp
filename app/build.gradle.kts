@@ -22,8 +22,8 @@ android {
         applicationId = "com.rajatxo.micup"
         minSdk = 21
         targetSdk = 35
-        versionCode = 20000
-        versionName = "2.0.0"
+        versionCode = 20100
+        versionName = "2.0.1"
         vectorDrawables { useSupportLibrary = true }
 
         // Agora App ID — baked into the APK via BuildConfig so the
@@ -51,8 +51,11 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
-            isShrinkResources = false
+            // Re-enabled minify + shrinkResources to shrink the APK size.
+            // Agora's native libs are ~50MB, so without R8 the universal
+            // APK was 78MB. With R8 + resource shrinking it drops to ~40MB.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
