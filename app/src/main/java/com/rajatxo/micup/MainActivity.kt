@@ -13,6 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -87,10 +88,14 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun App() {
-    var screen by remember { mutableStateOf("home") }
-    when (screen) {
-        "home" -> HomeScreen(onOpenSettings = { screen = "settings" })
-        "settings" -> SettingsScreen(onBack = { screen = "home" })
+    // Overlay settings on top of HomeScreen instead of navigating away:
+    // leaving HomeScreen's composition would dispose the active call.
+    var showSettings by remember { mutableStateOf(false) }
+    Box {
+        HomeScreen(onOpenSettings = { showSettings = true })
+        if (showSettings) {
+            SettingsScreen(onBack = { showSettings = false })
+        }
     }
 }
 
@@ -387,21 +392,39 @@ private fun HomeScreen(onOpenSettings: () -> Unit) {
                 )
 
                 Spacer(Modifier.height(12.dp))
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0x22FF6B6B))
-                        .clickable {
-                            Toast.makeText(context, "Playing test tone — turn media volume up", Toast.LENGTH_SHORT).show()
-                            AudioDeviceModuleBuilder.playTestTone(appContext)
-                        }
-                        .padding(horizontal = 16.dp, vertical = 10.dp)
-                ) {
-                    Text(
-                        "🔊 Test speaker / headset",
-                        color = Color(0xFFFF6B6B), fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0x22FF6B6B))
+                            .clickable {
+                                Toast.makeText(context, "Playing test tone — turn media volume up", Toast.LENGTH_SHORT).show()
+                                AudioDeviceModuleBuilder.playTestTone(appContext)
+                            }
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                    ) {
+                        Text(
+                            "🔊 Test speaker",
+                            color = Color(0xFFFF6B6B), fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0x22FF6B6B))
+                            .clickable {
+                                Toast.makeText(context, "Recording 2s — speak, then it plays back", Toast.LENGTH_SHORT).show()
+                                AudioDeviceModuleBuilder.playMicTest(appContext)
+                            }
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                    ) {
+                        Text(
+                            "🎤 Test mic",
+                            color = Color(0xFFFF6B6B), fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
 
                 errorMessage?.let {
@@ -495,7 +518,16 @@ private fun HomeScreen(onOpenSettings: () -> Unit) {
 @Composable
 private fun SettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
-    Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
+    Surface(
+        // Consume taps so they don't fall through to the call screen underneath.
+        modifier = Modifier
+            .fillMaxSize()
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { },
+        color = Color.Black
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()

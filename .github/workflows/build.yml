@@ -87,9 +87,10 @@ jobs:
           --title "MicUp ${VERSION_NAME}" \
           --notes "## MicUp ${VERSION_NAME}
 
-        - Fixed voice routing to the loudspeaker on phones that used the earpiece
-        - Wired headsets and Bluetooth now get the voice + game audio
-        - Added a Test speaker / headset button on the join screen
+        - Fixed: opening Settings no longer closes your active room
+        - Added a Test mic button (records 2s and plays it back) to check the mic alone
+        - Test speaker button plays a tone through the same route as the call
+        - Wired headsets and Bluetooth get the voice + game audio, no ducking
         - Reliable 5-person rooms (signaling routing + peer discovery fixes)
         - Rooms are capped at 5 people (you + 4 friends)" \
           --latest

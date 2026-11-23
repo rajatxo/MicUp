@@ -35,12 +35,14 @@ The OS sees MicUp's voice chat as a **game sound effect**, not a phone call → 
 
 ## Speaker, headphones, and Bluetooth
 
-Tap **🔊 Test speaker / headset** on the join screen to hear a short beep through the same route the voice call uses. No second phone needed.
+Tap **🔊 Test speaker** on the join screen to hear a short beep through the same route the voice call uses. Tap **🎤 Test mic** to record 2 seconds and play it back — this confirms the mic works (and shows Android's mic-in-use dot) without a second phone.
 
 - **Phone speaker:** voice goes to the loudspeaker, not the small earpiece.
 - **Wired headset:** voice and game audio go to the headset; the headset mic is used.
 - **Bluetooth / AirPods / neckband:** voice and game audio go to the headset over A2DP. The mic stays on the phone so game audio is never ducked. (Android cannot use a Bluetooth headset mic without switching to a call route, which ducks the game.)
 - Bluetooth or wired audio connected before or during a call takes priority over the speaker; MicUp re-routes automatically when you plug or unplug a headset.
+
+**About the green mic dot:** MicUp only opens the mic when it is actually sending your voice to someone. Alone in a room there is nobody to send to, so the mic stays closed and no dot appears — that is normal, not a broken mic. The dot shows up once a friend joins and the connection starts. Use **🎤 Test mic** to check the mic on your own.
 
 ---
 

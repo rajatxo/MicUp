@@ -5,6 +5,7 @@ import android.media.AudioAttributes;
 import android.media.AudioDeviceInfo;
 import android.media.AudioFormat;
 import android.media.AudioManager;
+import android.media.AudioRecord;
 import android.media.AudioTrack;
 import android.media.MediaRecorder;
 import android.os.Build;
@@ -188,6 +189,97 @@ public final class AudioDeviceModuleBuilder {
                 }
             }
         }, "MicUp-TestTone").start();
+    }
+
+    /**
+     * Records ~2 seconds from the mic and plays it back through the same
+     * USAGE_GAME route. Lets one person confirm the mic works (and see the
+     * Android mic-in-use indicator) without a second phone.
+     *
+     * Only call from the join screen: while in a call WebRTC already owns an
+     * AudioRecord, and a second capture can conflict.
+     */
+    public static void playMicTest(Context context) {
+        new Thread(() -> {
+            AudioRecord record = null;
+            AudioTrack track = null;
+            try {
+                AudioManager am = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
+                if (am == null) return;
+                AudioDeviceInfo device = prepareRoute(am);
+
+                int sampleRate = 48_000;
+                int minRec = AudioRecord.getMinBufferSize(
+                        sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+                if (minRec <= 0) {
+                    Log.w(TAG, "mic test: bad record buffer size");
+                    return;
+                }
+                record = createTestRecord(sampleRate, Math.max(minRec, sampleRate));
+                if (record.getState() != AudioRecord.STATE_INITIALIZED) {
+                    Log.w(TAG, "mic test: AudioRecord not initialized (permission?)");
+                    return;
+                }
+
+                int samples = sampleRate * 2; // 2 seconds
+                short[] captured = new short[samples];
+                record.startRecording();
+                int offset = 0;
+                while (offset < samples) {
+                    int n = record.read(captured, offset, samples - offset);
+                    if (n <= 0) break;
+                    offset += n;
+                }
+                record.stop();
+
+                if (offset == 0) {
+                    Log.w(TAG, "mic test: captured nothing");
+                    return;
+                }
+
+                int minPlay = AudioTrack.getMinBufferSize(
+                        sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT);
+                track = createTestTrack(sampleRate, AudioFormat.CHANNEL_OUT_MONO,
+                        Math.max(minPlay > 0 ? minPlay : 0, sampleRate));
+                if (track.getState() != AudioTrack.STATE_INITIALIZED) return;
+                if (device != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    track.setPreferredDevice(device);
+                }
+                track.play();
+                track.write(captured, 0, offset);
+                track.stop();
+            } catch (Throwable t) {
+                Log.w(TAG, "mic test failed", t);
+            } finally {
+                if (record != null) {
+                    try { record.release(); } catch (Throwable ignored) { }
+                }
+                if (track != null) {
+                    try { track.release(); } catch (Throwable ignored) { }
+                }
+            }
+        }, "MicUp-MicTest").start();
+    }
+
+    private static AudioRecord createTestRecord(int sampleRate, int bufferSize) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            AudioFormat format = new AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(sampleRate)
+                    .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                    .build();
+            return new AudioRecord.Builder()
+                    .setAudioSource(MediaRecorder.AudioSource.MIC)
+                    .setAudioFormat(format)
+                    .setBufferSizeInBytes(bufferSize)
+                    .build();
+        }
+        return new AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                sampleRate,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                bufferSize);
     }
 
     private static AudioDeviceInfo prepareRoute(AudioManager am) {
