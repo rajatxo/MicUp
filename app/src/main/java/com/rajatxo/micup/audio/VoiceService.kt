@@ -40,6 +40,7 @@ class VoiceService : Service() {
     private var displayName: String = ""
 
     companion object {
+        private const val TAG = "MicUp/VoiceService"
         const val NOTIF_ID = 4201
         const val ACTION_JOIN = "com.rajatxo.micup.JOIN_VOICE"
         const val ACTION_END = "com.rajatxo.micup.END_VOICE"
@@ -322,9 +323,5 @@ class VoiceService : Service() {
         try { webRtc?.release() } catch (_: Throwable) {}
         webRtc = null
         super.onDestroy()
-    }
-
-    private companion object {
-        const val TAG = "MicUp/VoiceService"
     }
 }
