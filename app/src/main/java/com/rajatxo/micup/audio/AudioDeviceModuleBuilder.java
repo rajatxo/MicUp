@@ -3,6 +3,7 @@ package com.rajatxo.micup.audio;
 import android.content.Context;
 import android.media.AudioAttributes;
 import android.media.AudioDeviceInfo;
+import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioTrack;
 import android.media.MediaRecorder;
@@ -12,6 +13,7 @@ import android.util.Log;
 import org.webrtc.audio.JavaAudioDeviceModule;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 
 /**
  * Java helper to build the WebRTC AudioDeviceModule with NO-DUCKING config.
@@ -26,12 +28,17 @@ import java.lang.reflect.Field;
  * treats our voice chat as a GAME SOUND EFFECT → stays in MODE_NORMAL →
  * NO DUCKING. Squad voice + game audio both play at full volume.
  *
- * ROUTING FIX (some phones put voice in the earpiece):
- * - Use MIC, not VOICE_COMMUNICATION. A "communication" recording source
- *   makes some OEMs route the output to the earpiece.
- * - Select the built-in speaker directly on WebRTC's AudioTrack with
- *   setPreferredDevice(). setSpeakerphoneOn() is ignored in MODE_NORMAL
- *   on many devices, which is why it alone was unreliable.
+ * ROUTING:
+ * - Pick the best connected output: wired headset > USB > BLE > Bluetooth
+ *   A2DP > Bluetooth SCO > built-in speaker.
+ * - Select that device directly on WebRTC's AudioTrack with
+ *   setPreferredDevice(). setSpeakerphoneOn() alone is ignored in
+ *   MODE_NORMAL on many devices.
+ * - Use MIC, not VOICE_COMMUNICATION, so some OEMs don't take the
+ *   communication/earpiece route.
+ *
+ * Bluetooth note: A2DP is output-only. To keep game audio un-ducked, the
+ * mic stays on the phone. A wired headset uses its own mic automatically.
  */
 public final class AudioDeviceModuleBuilder {
 
@@ -60,7 +67,7 @@ public final class AudioDeviceModuleBuilder {
             Context context,
             JavaAudioDeviceModule.SamplesReadyCallback samplesCallback) {
         // The callback fires after the output AudioTrack is playing. That is
-        // the first moment we can select the speaker on the real track.
+        // the first moment we can select the output device on the real track.
         final JavaAudioDeviceModule[] holder = new JavaAudioDeviceModule[1];
 
         JavaAudioDeviceModule.Builder builder = JavaAudioDeviceModule.builder(context)
@@ -76,7 +83,7 @@ public final class AudioDeviceModuleBuilder {
                 .setAudioTrackStateCallback(new JavaAudioDeviceModule.AudioTrackStateCallback() {
                     @Override
                     public void onWebRtcAudioTrackStart() {
-                        forceSpeaker(context, holder[0]);
+                        applyAudioRoute(context, holder[0]);
                     }
 
                     @Override
@@ -93,54 +100,37 @@ public final class AudioDeviceModuleBuilder {
     }
 
     /**
-     * Enable loudspeaker + force MODE_NORMAL (the no-ducking trick).
-     *
-     * CRITICAL: We must stay in MODE_NORMAL. If we enter
-     * MODE_IN_COMMUNICATION (which WebRTC does by default), Android
-     * will duck other apps.
+     * Apply the no-ducking mode + the best available output route.
+     * Safe to call before the AudioTrack exists (adm null): it still sets
+     * normal mode + speakerphone; the track-start callback calls it again.
      */
     public static void enableLoudspeakerAndNoDucking(Context context) {
-        forceSpeaker(context, null);
+        applyAudioRoute(context, null);
     }
 
     /**
-     * Force output to the built-in loudspeaker without entering
-     * MODE_IN_COMMUNICATION.
+     * Route voice to the best connected device without entering
+     * MODE_IN_COMMUNICATION (which would duck game audio).
      *
-     * Safe to call before the AudioTrack exists (adm null): it still sets
-     * normal mode + speakerphone, and the track-start callback calls it
-     * again once the real track is available.
+     * Priority: wired headset > USB > BLE > Bluetooth A2DP > Bluetooth SCO
+     * > built-in speaker.
      */
-    public static void forceSpeaker(Context context, JavaAudioDeviceModule adm) {
+    public static void applyAudioRoute(Context context, JavaAudioDeviceModule adm) {
         try {
             AudioManager am = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
             if (am == null) return;
 
-            // Keep normal mode: MODE_IN_COMMUNICATION would duck game audio.
-            am.setMode(AudioManager.MODE_NORMAL);
+            AudioDeviceInfo device = prepareRoute(am);
+            if (device == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
 
-            // Let Bluetooth/wired headsets win if the user has one connected.
-            // shortcut: a headset plugged in mid-call is picked up on the next
-            // forceSpeaker() call (ICE/track start), not instantly.
-            if (hasHeadset(am)) {
-                // Drop any speaker preference so the system can route to the headset.
-                AudioTrack track = extractAudioTrack(adm);
-                if (track != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    track.setPreferredDevice(null);
-                }
-                return;
-            }
-            am.setSpeakerphoneOn(true);
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
-
-            AudioDeviceInfo speaker = findBuiltinSpeaker(am);
             AudioTrack track = extractAudioTrack(adm);
-            if (speaker != null && track != null) {
-                boolean ok = track.setPreferredDevice(speaker);
-                Log.i(TAG, "setPreferredDevice(speaker)=" + ok);
+            if (track != null) {
+                boolean ok = track.setPreferredDevice(device);
+                Log.i(TAG, "route type=" + device.getType() + " preferred=" + ok);
             }
+            applyInputRoute(am, adm);
         } catch (Throwable t) {
-            Log.w(TAG, "forceSpeaker failed", t);
+            Log.w(TAG, "applyAudioRoute failed", t);
         }
     }
 
@@ -155,29 +145,204 @@ public final class AudioDeviceModuleBuilder {
         } catch (Throwable ignored) { }
     }
 
-    private static AudioDeviceInfo findBuiltinSpeaker(AudioManager am) {
+    /**
+     * Plays a short two-beep tone through the same USAGE_GAME route as the
+     * voice call. Lets one person check speaker / wired / Bluetooth routing
+     * without a second phone.
+     */
+    public static void playTestTone(Context context) {
+        new Thread(() -> {
+            AudioTrack track = null;
+            try {
+                AudioManager am = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
+                if (am == null) return;
+                AudioDeviceInfo device = prepareRoute(am);
+
+                int sampleRate = 48_000;
+                int channelMask = AudioFormat.CHANNEL_OUT_MONO;
+                int minBuffer = AudioTrack.getMinBufferSize(
+                        sampleRate, channelMask, AudioFormat.ENCODING_PCM_16BIT);
+                int bufferSize = Math.max(minBuffer > 0 ? minBuffer : 0, sampleRate);
+
+                track = createTestTrack(sampleRate, channelMask, bufferSize);
+                if (track.getState() != AudioTrack.STATE_INITIALIZED) {
+                    Log.w(TAG, "test tone track not initialized");
+                    return;
+                }
+                if (device != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    track.setPreferredDevice(device);
+                }
+
+                short[] beep = makeBeep(sampleRate);
+                short[] gap = new short[beep.length];
+                track.play();
+                track.write(beep, 0, beep.length);
+                track.write(gap, 0, gap.length);
+                track.write(beep, 0, beep.length);
+                track.stop();
+            } catch (Throwable t) {
+                Log.w(TAG, "test tone failed", t);
+            } finally {
+                if (track != null) {
+                    try { track.release(); } catch (Throwable ignored) { }
+                }
+            }
+        }, "MicUp-TestTone").start();
+    }
+
+    private static AudioDeviceInfo prepareRoute(AudioManager am) {
+        // Keep normal mode: MODE_IN_COMMUNICATION would duck game audio.
+        am.setMode(AudioManager.MODE_NORMAL);
+        AudioDeviceInfo device = pickOutputDevice(am);
+        if (device != null) {
+            am.setSpeakerphoneOn(device.getType() == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER);
+        } else {
+            // API < 23 has no device list; keep the old speakerphone fallback.
+            am.setSpeakerphoneOn(true);
+        }
+        return device;
+    }
+
+    private static AudioDeviceInfo pickOutputDevice(AudioManager am) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return null;
+
+        AudioDeviceInfo wiredHeadset = null, wiredPhones = null;
+        AudioDeviceInfo usbHeadset = null, usbDevice = null;
+        AudioDeviceInfo bleHeadset = null, bleSpeaker = null, hearingAid = null;
+        AudioDeviceInfo a2dp = null, sco = null, speaker = null;
+
         for (AudioDeviceInfo d : am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
-            if (d.getType() == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) {
-                return d;
+            switch (d.getType()) {
+                case AudioDeviceInfo.TYPE_WIRED_HEADSET:
+                    if (wiredHeadset == null) wiredHeadset = d;
+                    break;
+                case AudioDeviceInfo.TYPE_WIRED_HEADPHONES:
+                    if (wiredPhones == null) wiredPhones = d;
+                    break;
+                case AudioDeviceInfo.TYPE_USB_HEADSET:
+                    if (usbHeadset == null) usbHeadset = d;
+                    break;
+                case AudioDeviceInfo.TYPE_USB_DEVICE:
+                case AudioDeviceInfo.TYPE_USB_ACCESSORY:
+                    if (usbDevice == null) usbDevice = d;
+                    break;
+                case AudioDeviceInfo.TYPE_BLE_HEADSET:
+                    if (bleHeadset == null) bleHeadset = d;
+                    break;
+                case AudioDeviceInfo.TYPE_BLE_SPEAKER:
+                    if (bleSpeaker == null) bleSpeaker = d;
+                    break;
+                case AudioDeviceInfo.TYPE_HEARING_AID:
+                    if (hearingAid == null) hearingAid = d;
+                    break;
+                case AudioDeviceInfo.TYPE_BLUETOOTH_A2DP:
+                    if (a2dp == null) a2dp = d;
+                    break;
+                case AudioDeviceInfo.TYPE_BLUETOOTH_SCO:
+                    if (sco == null) sco = d;
+                    break;
+                case AudioDeviceInfo.TYPE_BUILTIN_SPEAKER:
+                    speaker = d;
+                    break;
+                default:
+                    break;
             }
         }
+
+        // Wired/USB first: two-way audio works without changing the mode.
+        if (wiredHeadset != null) return wiredHeadset;
+        if (wiredPhones != null) return wiredPhones;
+        if (usbHeadset != null) return usbHeadset;
+        if (usbDevice != null) return usbDevice;
+        // LE Audio / hearing aids, then classic Bluetooth.
+        if (bleHeadset != null) return bleHeadset;
+        if (hearingAid != null) return hearingAid;
+        if (bleSpeaker != null) return bleSpeaker;
+        if (a2dp != null) return a2dp;
+        if (sco != null) return sco;
+        return speaker;
+    }
+
+    /**
+     * Wired/USB/BLE headsets have their own mic. Select it so MIC source
+     * doesn't keep using the phone mic. Bluetooth SCO is skipped on purpose:
+     * activating SCO is what causes game audio to duck.
+     */
+    private static void applyInputRoute(AudioManager am, JavaAudioDeviceModule adm) {
+        if (adm == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
+        AudioDeviceInfo input = pickInputDevice(am);
+        try {
+            Field inputField = JavaAudioDeviceModule.class.getField("audioInput");
+            Object audioInput = inputField.get(adm);
+            if (audioInput == null) return;
+            Method setPreferred = audioInput.getClass()
+                    .getDeclaredMethod("setPreferredDevice", AudioDeviceInfo.class);
+            setPreferred.setAccessible(true);
+            // null clears a stale headset preference after unplugging.
+            setPreferred.invoke(audioInput, input);
+            Log.i(TAG, "input type=" + (input != null ? String.valueOf(input.getType()) : "default"));
+        } catch (Throwable t) {
+            // Reflection is best-effort; the default mic still works.
+            Log.w(TAG, "applyInputRoute failed", t);
+        }
+    }
+
+    private static AudioDeviceInfo pickInputDevice(AudioManager am) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return null;
+        AudioDeviceInfo wired = null, usb = null, ble = null;
+        for (AudioDeviceInfo d : am.getDevices(AudioManager.GET_DEVICES_INPUTS)) {
+            switch (d.getType()) {
+                case AudioDeviceInfo.TYPE_WIRED_HEADSET:
+                    if (wired == null) wired = d;
+                    break;
+                case AudioDeviceInfo.TYPE_USB_HEADSET:
+                    if (usb == null) usb = d;
+                    break;
+                case AudioDeviceInfo.TYPE_BLE_HEADSET:
+                    if (ble == null) ble = d;
+                    break;
+                default:
+                    break;
+            }
+        }
+        if (wired != null) return wired;
+        if (usb != null) return usb;
+        if (ble != null) return ble;
         return null;
     }
 
-    private static boolean hasHeadset(AudioManager am) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false;
-        for (AudioDeviceInfo d : am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
-            int type = d.getType();
-            if (type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP
-                    || type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
-                    || type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES
-                    || type == AudioDeviceInfo.TYPE_WIRED_HEADSET
-                    || type == AudioDeviceInfo.TYPE_USB_HEADSET) {
-                return true;
-            }
+    private static AudioTrack createTestTrack(int sampleRate, int channelMask, int bufferSize) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            AudioFormat format = new AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(sampleRate)
+                    .setChannelMask(channelMask)
+                    .build();
+            return new AudioTrack.Builder()
+                    .setAudioAttributes(NO_DUCKING_ATTRIBUTES)
+                    .setAudioFormat(format)
+                    .setBufferSizeInBytes(bufferSize)
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .build();
         }
-        return false;
+        return new AudioTrack(
+                AudioManager.STREAM_MUSIC,
+                sampleRate,
+                channelMask,
+                AudioFormat.ENCODING_PCM_16BIT,
+                bufferSize,
+                AudioTrack.MODE_STREAM);
+    }
+
+    private static short[] makeBeep(int sampleRate) {
+        int samples = sampleRate / 4; // 250 ms
+        short[] out = new short[samples];
+        for (int i = 0; i < samples; i++) {
+            double fade = Math.min(1.0, Math.min(i, samples - 1 - i) / (sampleRate * 0.01));
+            out[i] = (short) (Math.sin(2 * Math.PI * 660.0 * i / sampleRate)
+                    * 0.35 * Short.MAX_VALUE * fade);
+        }
+        return out;
     }
 
     /**

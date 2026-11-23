@@ -88,9 +88,10 @@ jobs:
           --notes "## MicUp ${VERSION_NAME}
 
         - Fixed voice routing to the loudspeaker on phones that used the earpiece
+        - Wired headsets and Bluetooth now get the voice + game audio
+        - Added a Test speaker / headset button on the join screen
         - Reliable 5-person rooms (signaling routing + peer discovery fixes)
-        - Rooms are capped at 5 people (you + 4 friends)
-        - Headsets and Bluetooth still take over when connected" \
+        - Rooms are capped at 5 people (you + 4 friends)" \
           --latest
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -62,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
+import com.rajatxo.micup.audio.AudioDeviceModuleBuilder
 import com.rajatxo.micup.audio.SignalingClient
 import com.rajatxo.micup.audio.SignalingMessage
 import com.rajatxo.micup.audio.WebRtcClient
@@ -383,6 +385,24 @@ private fun HomeScreen(onOpenSettings: () -> Unit) {
                     "Share the room code with your friends.\nMax 5 people per room (you + 4 friends) · ~60 MB/hour",
                     color = Color(0xFF888888), fontSize = 11.sp, textAlign = TextAlign.Center
                 )
+
+                Spacer(Modifier.height(12.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0x22FF6B6B))
+                        .clickable {
+                            Toast.makeText(context, "Playing test tone — turn media volume up", Toast.LENGTH_SHORT).show()
+                            AudioDeviceModuleBuilder.playTestTone(appContext)
+                        }
+                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                ) {
+                    Text(
+                        "🔊 Test speaker / headset",
+                        color = Color(0xFFFF6B6B), fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
 
                 errorMessage?.let {
                     Spacer(Modifier.height(12.dp))

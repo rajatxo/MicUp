@@ -1,6 +1,10 @@
 package com.rajatxo.micup.audio
 
 import android.content.Context
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
+import android.os.Build
 import android.util.Log
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
@@ -47,6 +51,7 @@ class WebRtcClient(
     private var adm: JavaAudioDeviceModule? = null
     private var audioSource: AudioSource? = null
     private var audioTrack: AudioTrack? = null
+    private var deviceCallback: AudioDeviceCallback? = null
 
     /** Map of remotePeerId → PeerConnectionEntry (one per remote peer). */
     private val peers = ConcurrentHashMap<String, PeerEntry>()
@@ -72,6 +77,7 @@ class WebRtcClient(
 
             adm = AudioDeviceModuleBuilder.build(context, null)
             AudioDeviceModuleBuilder.enableLoudspeakerAndNoDucking(context)
+            registerAudioDeviceCallback()
 
             factory = PeerConnectionFactory.builder()
                 .setAudioDeviceModule(adm!!)
@@ -129,7 +135,7 @@ class WebRtcClient(
                 // need this called AFTER the audio track is streaming.
                 if (state == PeerConnection.IceConnectionState.CONNECTED ||
                     state == PeerConnection.IceConnectionState.COMPLETED) {
-                    adm?.let { AudioDeviceModuleBuilder.forceSpeaker(context, it) }
+                    adm?.let { AudioDeviceModuleBuilder.applyAudioRoute(context, it) }
                 }
                 state?.let { listener.onPeerIceStateChanged(remotePeerId, it) }
             }
@@ -345,8 +351,35 @@ class WebRtcClient(
     /** Get all connected peer IDs. */
     fun getConnectedPeers(): Set<String> = peers.keys
 
+    /** Re-route when a headset is plugged/unplugged or Bluetooth connects. */
+    private fun registerAudioDeviceCallback() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        val cb = object : AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
+                adm?.let { AudioDeviceModuleBuilder.applyAudioRoute(context, it) }
+            }
+
+            override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
+                adm?.let { AudioDeviceModuleBuilder.applyAudioRoute(context, it) }
+            }
+        }
+        am.registerAudioDeviceCallback(cb, null)
+        deviceCallback = cb
+    }
+
+    private fun unregisterAudioDeviceCallback() {
+        val cb = deviceCallback ?: return
+        deviceCallback = null
+        try {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            am?.unregisterAudioDeviceCallback(cb)
+        } catch (_: Throwable) {}
+    }
+
     /** Tear down everything. */
     fun release() {
+        unregisterAudioDeviceCallback()
         peers.values.forEach { entry ->
             try { entry.connection.dispose() } catch (_: Throwable) {}
         }
