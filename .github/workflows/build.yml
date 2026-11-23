@@ -1,4 +1,4 @@
-name: Build MicUp Step 1
+name: Build MicUp APK
 
 on:
   push:
@@ -85,18 +85,12 @@ jobs:
         gh release create latest \
           "MicUp-${VERSION_NAME}.apk" \
           --title "MicUp ${VERSION_NAME}" \
-          --notes "## Step 1: WebRTC Load Test
+          --notes "## MicUp ${VERSION_NAME}
 
-        This build ONLY tests whether the WebRTC native library loads on your phone.
-
-        **What to do:**
-        1. Install the APK
-        2. Open it — you'll see a single screen
-        3. It shows either:
-           - ✅ 'WebRTC loaded ✓' (Step 1 PASSED)
-           - ❌ 'WebRTC FAILED ✗' with the exact error (send me a screenshot)
-
-        **Don't expect anything else** — no rooms, no mic, no UI. Just a load test." \
+        - Fixed voice routing to the loudspeaker on phones that used the earpiece
+        - Reliable 5-person rooms (signaling routing + peer discovery fixes)
+        - Rooms are capped at 5 people (you + 4 friends)
+        - Headsets and Bluetooth still take over when connected" \
           --latest
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

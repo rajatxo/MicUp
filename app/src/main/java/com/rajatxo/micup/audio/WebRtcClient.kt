@@ -23,8 +23,9 @@ import java.util.concurrent.ConcurrentHashMap
  * Mesh limits:
  * - 2 people: 1 connection each (perfect)
  * - 3 people: 2 connections each (great)
- * - 4 people: 3 connections each (works, may get heavy on weak networks)
- * - 5+ people: would need an SFU server (not supported)
+ * - 4 people: 3 connections each (fine)
+ * - 5 people: 4 connections each (practical ceiling for a friend group)
+ * - 6+ people: would need an SFU server (not supported)
  *
  * Hotspot fix: iceTransportPolicy = RELAY forces TURN relay when direct
  * P2P fails (which happens when both phones share a hotspot).
@@ -128,7 +129,7 @@ class WebRtcClient(
                 // need this called AFTER the audio track is streaming.
                 if (state == PeerConnection.IceConnectionState.CONNECTED ||
                     state == PeerConnection.IceConnectionState.COMPLETED) {
-                    AudioDeviceModuleBuilder.forceLoudspeakerOn(context)
+                    adm?.let { AudioDeviceModuleBuilder.forceSpeaker(context, it) }
                 }
                 state?.let { listener.onPeerIceStateChanged(remotePeerId, it) }
             }
@@ -174,15 +175,28 @@ class WebRtcClient(
         Log.i(TAG, "[$remotePeerId] Creating offer (we are caller)")
         entry.connection.createOffer(object : SdpObserver {
             override fun onCreateSuccess(sdp: SessionDescription?) {
-                val desc = sdp ?: return
+                val desc = sdp ?: run {
+                    entry.makingOffer = false
+                    return
+                }
                 entry.connection.setLocalDescription(object : SdpObserver {
-                    override fun onSetSuccess() { Log.i(TAG, "[$remotePeerId] Local offer set") }
+                    override fun onSetSuccess() {
+                        // Only send once the local description is actually set.
+                        entry.makingOffer = false
+                        Log.i(TAG, "[$remotePeerId] Local offer set")
+                        // If a polite rollback already happened, this offer is
+                        // stale; don't send it on top of the accepted remote offer.
+                        if (entry.connection.signalingState() == PeerConnection.SignalingState.HAVE_LOCAL_OFFER) {
+                            listener.onOfferReadyForPeer(remotePeerId, desc.description)
+                        }
+                    }
                     override fun onCreateSuccess(p0: SessionDescription?) {}
                     override fun onCreateFailure(p0: String?) {}
-                    override fun onSetFailure(p0: String?) { Log.e(TAG, "[$remotePeerId] setLocalOffer failed: $p0") }
+                    override fun onSetFailure(error: String?) {
+                        entry.makingOffer = false
+                        listener.onPeerError(remotePeerId, "setLocalOffer: $error")
+                    }
                 }, desc)
-                entry.makingOffer = false
-                listener.onOfferReadyForPeer(remotePeerId, desc.description)
             }
             override fun onSetSuccess() {}
             override fun onCreateFailure(error: String?) {
@@ -207,46 +221,62 @@ class WebRtcClient(
             return
         }
 
-        if (offerCollision) {
-            Log.i(TAG, "[$remotePeerId] Glare — rolling back our offer (polite)")
-            entry.connection.setLocalDescription(object : SdpObserver {
-                override fun onSetSuccess() { Log.i(TAG, "[$remotePeerId] Rollback OK") }
+        val applyRemoteOffer = {
+            entry.connection.setRemoteDescription(object : SdpObserver {
+                override fun onSetSuccess() {
+                    Log.i(TAG, "[$remotePeerId] Remote offer set")
+                    entry.remoteSdpSet = true
+                    entry.ignoreOffer = false
+                    flushPendingIce(remotePeerId)
+                    // Create answer
+                    entry.connection.createAnswer(object : SdpObserver {
+                        override fun onCreateSuccess(sdp: SessionDescription?) {
+                            val desc = sdp ?: return
+                            entry.connection.setLocalDescription(object : SdpObserver {
+                                override fun onSetSuccess() {
+                                    Log.i(TAG, "[$remotePeerId] Local answer set")
+                                    listener.onAnswerReadyForPeer(remotePeerId, desc.description)
+                                }
+                                override fun onCreateSuccess(p0: SessionDescription?) {}
+                                override fun onCreateFailure(p0: String?) {}
+                                override fun onSetFailure(error: String?) {
+                                    listener.onPeerError(remotePeerId, "setLocalAnswer: $error")
+                                }
+                            }, desc)
+                        }
+                        override fun onSetSuccess() {}
+                        override fun onCreateFailure(error: String?) {
+                            listener.onPeerError(remotePeerId, "createAnswer: $error")
+                        }
+                        override fun onSetFailure(error: String?) {}
+                    }, MediaConstraints())
+                }
                 override fun onCreateSuccess(p0: SessionDescription?) {}
                 override fun onCreateFailure(p0: String?) {}
-                override fun onSetFailure(p0: String?) { Log.e(TAG, "[$remotePeerId] Rollback failed: $p0") }
-            }, SessionDescription(SessionDescription.Type.ROLLBACK, ""))
+                override fun onSetFailure(error: String?) {
+                    listener.onPeerError(remotePeerId, "setRemoteOffer: $error")
+                }
+            }, SessionDescription(SessionDescription.Type.OFFER, sdp))
         }
 
-        entry.connection.setRemoteDescription(object : SdpObserver {
-            override fun onSetSuccess() {
-                Log.i(TAG, "[$remotePeerId] Remote offer set")
-                entry.remoteSdpSet = true
-                flushPendingIce(remotePeerId)
-                // Create answer
-                entry.connection.createAnswer(object : SdpObserver {
-                    override fun onCreateSuccess(sdp: SessionDescription?) {
-                        val desc = sdp ?: return
-                        entry.connection.setLocalDescription(object : SdpObserver {
-                            override fun onSetSuccess() { Log.i(TAG, "[$remotePeerId] Local answer set") }
-                            override fun onCreateSuccess(p0: SessionDescription?) {}
-                            override fun onCreateFailure(p0: String?) {}
-                            override fun onSetFailure(p0: String?) { Log.e(TAG, "[$remotePeerId] setLocalAnswer failed: $p0") }
-                        }, desc)
-                        listener.onAnswerReadyForPeer(remotePeerId, desc.description)
-                    }
-                    override fun onSetSuccess() {}
-                    override fun onCreateFailure(error: String?) {
-                        listener.onPeerError(remotePeerId, "createAnswer: $error")
-                    }
-                    override fun onSetFailure(error: String?) {}
-                }, MediaConstraints())
-            }
-            override fun onCreateSuccess(p0: SessionDescription?) {}
-            override fun onCreateFailure(p0: String?) {}
-            override fun onSetFailure(error: String?) {
-                listener.onPeerError(remotePeerId, "setRemoteOffer: $error")
-            }
-        }, SessionDescription(SessionDescription.Type.OFFER, sdp))
+        if (offerCollision) {
+            Log.i(TAG, "[$remotePeerId] Glare — rolling back our offer (polite)")
+            entry.makingOffer = false
+            entry.connection.setLocalDescription(object : SdpObserver {
+                override fun onSetSuccess() {
+                    Log.i(TAG, "[$remotePeerId] Rollback OK")
+                    // Apply the remote offer only after the rollback finishes.
+                    applyRemoteOffer()
+                }
+                override fun onCreateSuccess(p0: SessionDescription?) {}
+                override fun onCreateFailure(p0: String?) {}
+                override fun onSetFailure(error: String?) {
+                    listener.onPeerError(remotePeerId, "rollback: $error")
+                }
+            }, SessionDescription(SessionDescription.Type.ROLLBACK, ""))
+        } else {
+            applyRemoteOffer()
+        }
     }
 
     /**
@@ -254,14 +284,11 @@ class WebRtcClient(
      */
     fun handleRemoteAnswer(remotePeerId: String, sdp: String) {
         val entry = peers[remotePeerId] ?: return
-        if (entry.ignoreOffer) {
-            Log.i(TAG, "[$remotePeerId] Ignoring answer (glare)")
-            return
-        }
         entry.connection.setRemoteDescription(object : SdpObserver {
             override fun onSetSuccess() {
                 Log.i(TAG, "[$remotePeerId] Remote answer set")
                 entry.remoteSdpSet = true
+                entry.ignoreOffer = false
                 flushPendingIce(remotePeerId)
             }
             override fun onCreateSuccess(p0: SessionDescription?) {}
@@ -324,6 +351,7 @@ class WebRtcClient(
             try { entry.connection.dispose() } catch (_: Throwable) {}
         }
         peers.clear()
+        try { adm?.let { AudioDeviceModuleBuilder.clearPreferredDevice(it) } } catch (_: Throwable) {}
         try { audioTrack?.dispose() } catch (_: Throwable) {}
         try { audioSource?.dispose() } catch (_: Throwable) {}
         try { factory?.dispose() } catch (_: Throwable) {}

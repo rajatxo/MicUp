@@ -14,6 +14,10 @@
  * Free tier: 100k Durable Object requests/day — plenty for a friend group.
  */
 
+// Five people total per room (you + 4 friends). A WebRTC mesh does not
+// need an SFU at this size, and the free Cloudflare plan handles it.
+const MAX_PEERS = 5;
+
 // ===== Worker entry point — routes requests to the right Durable Object =====
 export default {
   async fetch(request, env) {
@@ -23,7 +27,8 @@ export default {
         name: "MicUp Signaling Server",
         status: "ok",
         usage: "Connect via WebSocket with ?room=ROOMCODE&peer=PEERID",
-        protocol: "Durable Object broadcast — all sockets in same room see each other"
+        maxPeers: MAX_PEERS,
+        protocol: "Durable Object routing — direct messages go to one peer"
       }, null, 2), {
         status: 200,
         headers: { "Content-Type": "application/json" }
@@ -51,11 +56,25 @@ export class RoomObject {
     this.env = env;
     // Set of all WebSockets connected to this room.
     this.sessions = new Set();
+    // peerId -> display name, so new joiners see real names.
+    this.peerNames = new Map();
   }
 
   async fetch(request) {
     const url = new URL(request.url);
     const peer = url.searchParams.get("peer") || crypto.randomUUID();
+
+    // Room cap: 5 people total.
+    if (this.sessions.size >= MAX_PEERS) {
+      const [client, server] = Object.values(new WebSocketPair());
+      server.accept();
+      server.send(JSON.stringify({
+        type: "error",
+        message: "Room is full (max 5 people)"
+      }));
+      server.close(4001, "room full");
+      return new Response(null, { status: 101, webSocket: client });
+    }
 
     // Create the WebSocket pair.
     const [client, server] = Object.values(new WebSocketPair());
@@ -69,8 +88,49 @@ export class RoomObject {
     // Accept the WebSocket.
     server.accept();
 
-    // --- BROADCAST on message ---
+    // Tell the new joiner who is already here. Without this, the new peer
+    // never learns about existing peers (only existing peers hear its
+    // Hello), and the lower-ID side waits forever for an offer.
+    const existing = [];
+    for (const other of this.sessions) {
+      if (other !== server) {
+        existing.push({
+          id: other.peerId,
+          name: this.peerNames.get(other.peerId) || "Friend"
+        });
+      }
+    }
+    if (existing.length > 0) {
+      server.send(JSON.stringify({ type: "peers", peers: existing }));
+    }
+
+    // --- ROUTE on message ---
     server.addEventListener("message", (event) => {
+      let msg = null;
+      try {
+        msg = JSON.parse(event.data);
+      } catch (e) {
+        // Ignore malformed messages.
+      }
+
+      if (msg && msg.type === "hello") {
+        this.peerNames.set(server.peerId, msg.name || "Friend");
+      }
+
+      // Direct messages (offer / answer / ice) carry a "to" field and go
+      // only to that peer. Everything else (hello / bye) is broadcast.
+      if (msg && msg.to) {
+        const target = [...this.sessions].find((s) => s.peerId === msg.to);
+        if (target && target.readyState === 1) {
+          try {
+            target.send(event.data);
+          } catch (e) {
+            // ignore broken socket
+          }
+        }
+        return;
+      }
+
       // Forward to all OTHER sockets in this room.
       for (const other of this.sessions) {
         if (other !== server && other.readyState === 1) {
@@ -84,13 +144,25 @@ export class RoomObject {
     });
 
     // --- CLEANUP on close ---
-    server.addEventListener("close", () => {
-      this.sessions.delete(server);
-    });
+    const cleanup = () => {
+      // Only the first close/error event should broadcast a bye.
+      if (!this.sessions.delete(server)) return;
+      this.peerNames.delete(server.peerId);
 
-    server.addEventListener("error", () => {
-      this.sessions.delete(server);
-    });
+      const bye = JSON.stringify({ type: "bye", from: server.peerId });
+      for (const other of this.sessions) {
+        if (other.readyState === 1) {
+          try {
+            other.send(bye);
+          } catch (e) {
+            // ignore broken socket
+          }
+        }
+      }
+    };
+
+    server.addEventListener("close", cleanup);
+    server.addEventListener("error", cleanup);
 
     // Return the client socket — completes the upgrade.
     return new Response(null, {

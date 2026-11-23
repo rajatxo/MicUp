@@ -12,18 +12,18 @@ Works alongside any game — Free Fire, BGMI, CODM, Mobile Legends, anything.
 |---|---|---|
 | Audio mode | `MODE_IN_COMMUNICATION` | `MODE_NORMAL` |
 | AudioTrack usage | `USAGE_VOICE_COMMUNICATION` | `USAGE_GAME` |
-| AEC/NS | Hardware (only in comm mode) | Software (Agora AI NS + AEC3) |
+| AEC/NS | Hardware (only in comm mode) | Software (WebRTC AEC3 + NS) |
 
 The OS sees MicUp's voice chat as a **game sound effect**, not a phone call → no ducking → squad voice + game audio both at full volume.
 
-**Powered by Agora** — the same SDK Free Fire uses for in-game voice, but configured with `AUDIO_PROFILE_MUSIC_HIGH_QUALITY` for Telegram-quality audio (128kbps Opus + AI noise suppression).
+**Powered by WebRTC** — a free peer-to-peer mesh, no paid voice service. Rooms are capped at **5 people** (you + 4 friends), which is the practical limit for a mesh and plenty for a squad. Voice is routed to the loudspeaker on phones that would otherwise put it in the earpiece.
 
 ## Get the APK
 
 1. Go to **https://github.com/rajatxo/MicUp/releases/latest**
 2. Download `MicUp-vX.X.X.apk`
 3. Install on your phone (enable "Install unknown apps" for your browser)
-4. Open MicUp → grant mic permission → **Create Room** → share the 6-character code with your squad
+4. Open MicUp → grant mic permission → **Create Room** → share the 5-character code with your squad
 
 ## How to use during gameplay
 

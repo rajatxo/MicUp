@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit
  */
 class SignalingClient(
     private val serverUrl: String,
+    private val myPeerId: String,
     private val listener: Listener
 ) {
     interface Listener {
@@ -54,6 +55,9 @@ class SignalingClient(
                     // process if it matches our peer ID. If absent, broadcast
                     // (old behavior, for backward compat).
                     val to = json.optString("to", "")
+                    // Safety net: if an old server still broadcasts direct
+                    // messages, ignore anything addressed to another peer.
+                    if (to.isNotEmpty() && to != myPeerId) return
                     val message = when (type) {
                         "hello", "Hello" -> SignalingMessage.Hello(from, json.optString("name", from))
                         "offer", "Offer" -> SignalingMessage.Offer(from, to, json.optString("sdp", json.optString("description", "")))
@@ -69,6 +73,21 @@ class SignalingClient(
                                 cand?.optInt("sdpMLineIndex", 0) ?: 0
                             )
                         }
+                        "peers", "Peers" -> {
+                            val arr = json.optJSONArray("peers")
+                            val peers = mutableListOf<SignalingMessage.PeerInfo>()
+                            if (arr != null) {
+                                for (i in 0 until arr.length()) {
+                                    val p = arr.optJSONObject(i) ?: continue
+                                    val id = p.optString("id", "")
+                                    if (id.isNotEmpty()) {
+                                        peers.add(SignalingMessage.PeerInfo(id, p.optString("name", "Friend")))
+                                    }
+                                }
+                            }
+                            SignalingMessage.Peers(peers)
+                        }
+                        "error", "Error" -> SignalingMessage.Error(json.optString("message", "Unknown error"))
                         "bye", "Bye" -> SignalingMessage.Bye(from)
                         else -> null
                 }
@@ -86,7 +105,12 @@ class SignalingClient(
 
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {
                 Log.i(TAG, "WebSocket closed: $code $reason")
-                listener.onDisconnected("Closed: $reason")
+                if (code == 4001) {
+                    // Server rejected the join because the room already has 5 people.
+                    listener.onError("Room is full (max 5 people)")
+                } else {
+                    listener.onDisconnected("Closed: $reason")
+                }
             }
 
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
@@ -161,5 +185,16 @@ sealed class SignalingMessage {
 
     data class Bye(val from: String) : SignalingMessage() {
         override fun toJson() = JSONObject().put("type", "bye").put("from", from)
+    }
+
+    data class PeerInfo(val id: String, val name: String)
+
+    /** Sent by the server to a new joiner so it learns who is already here. */
+    data class Peers(val peers: List<PeerInfo>) : SignalingMessage() {
+        override fun toJson() = JSONObject().put("type", "peers")
+    }
+
+    data class Error(val message: String) : SignalingMessage() {
+        override fun toJson() = JSONObject().put("type", "error").put("message", message)
     }
 }

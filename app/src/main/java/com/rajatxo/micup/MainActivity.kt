@@ -299,7 +299,7 @@ private fun HomeScreen(onOpenSettings: () -> Unit) {
                             }
                             webRtc = rtc
 
-                            val sig = SignalingClient(SIGNALING_URL, object : SignalingClient.Listener {
+                            val sig = SignalingClient(SIGNALING_URL, myPeerId, object : SignalingClient.Listener {
                                 override fun onConnected() {
                                     status = "Waiting for friends..."
                                     isConnected = true
@@ -314,6 +314,15 @@ private fun HomeScreen(onOpenSettings: () -> Unit) {
                                                 participants.value = participants.value + Participant(message.from, name)
                                                 val isNew = webRtc?.addPeer(message.from) ?: false
                                                 if (isNew) webRtc?.maybeCreateOffer(message.from)
+                                            }
+                                        }
+                                        is SignalingMessage.Peers -> {
+                                            message.peers.forEach { p ->
+                                                if (p.id != myPeerId && participants.value.none { it.peerId == p.id }) {
+                                                    participants.value = participants.value + Participant(p.id, p.name)
+                                                    val isNew = webRtc?.addPeer(p.id) ?: false
+                                                    if (isNew) webRtc?.maybeCreateOffer(p.id)
+                                                }
                                             }
                                         }
                                         is SignalingMessage.Offer -> {
@@ -335,6 +344,13 @@ private fun HomeScreen(onOpenSettings: () -> Unit) {
                                             webRtc?.removePeer(message.from)
                                             participants.value = participants.value.filterNot { it.peerId == message.from }
                                         }
+                                        is SignalingMessage.Error -> {
+                                            errorMessage = message.message
+                                            status = message.message
+                                            isConnected = false
+                                            isConnecting = false
+                                            signaling?.disconnect()
+                                        }
                                     }
                                 }
                                 override fun onDisconnected(reason: String) {
@@ -348,6 +364,10 @@ private fun HomeScreen(onOpenSettings: () -> Unit) {
                                     errorMessage = error
                                     status = "FAILED"
                                     isConnecting = false
+                                    if (error.contains("Room is full", ignoreCase = true)) {
+                                        isConnected = false
+                                        participants.value = emptyList()
+                                    }
                                 }
                             })
                             sig.connect(roomCode, myPeerId)
@@ -360,7 +380,7 @@ private fun HomeScreen(onOpenSettings: () -> Unit) {
 
                 Spacer(Modifier.height(16.dp))
                 Text(
-                    "Share the room code with your friends.\nMax 4 friends per room · ~60 MB/hour",
+                    "Share the room code with your friends.\nMax 5 people per room (you + 4 friends) · ~60 MB/hour",
                     color = Color(0xFF888888), fontSize = 11.sp, textAlign = TextAlign.Center
                 )
 
@@ -493,7 +513,7 @@ private fun SettingsScreen(onBack: () -> Unit) {
             ) {
                 Text("MicUp", color = Color(0xFFFF6B6B), fontSize = 24.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(4.dp))
-                Text("Version 3.7.1", color = Color(0xFF888888), fontSize = 12.sp)
+                Text("Version ${BuildConfig.VERSION_NAME}", color = Color(0xFF888888), fontSize = 12.sp)
                 Spacer(Modifier.height(16.dp))
                 Text(
                     "Voice rooms that never duck your game sound. " +
