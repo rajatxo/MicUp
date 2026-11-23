@@ -87,11 +87,12 @@ jobs:
           --title "MicUp ${VERSION_NAME}" \
           --notes "## MicUp ${VERSION_NAME}
 
+        - Room now stays alive when you close the app or remove it from the task manager
+        - Persistent notification shows the room is active, with an End chat button
+        - Ending your call no longer kicks friends out of the room
         - Fixed: opening Settings no longer closes your active room
-        - Added a Test mic button (records 2s and plays it back) to check the mic alone
-        - Test speaker button plays a tone through the same route as the call
+        - Test mic and Test speaker buttons let you verify mic + routing alone
         - Wired headsets and Bluetooth get the voice + game audio, no ducking
-        - Reliable 5-person rooms (signaling routing + peer discovery fixes)
         - Rooms are capped at 5 people (you + 4 friends)" \
           --latest
       env:

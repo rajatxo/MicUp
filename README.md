@@ -33,6 +33,15 @@ The OS sees MicUp's voice chat as a **game sound effect**, not a phone call → 
 4. MicUp keeps running in the background (notification shows "Voice Room")
 5. Play normally — squad voice + game audio both at full volume
 
+## Background behavior and ending a room
+
+The call lives in a foreground service, not in the screen you see:
+
+- **Closing the app or swiping it away from the task manager does NOT end the room.** You can reopen MicUp later and you'll still be in the same room.
+- The notification shows **"MicUp — Voice Room"** with an **End chat** button. Tap it to leave without opening the app.
+- **Leaving only drops you.** Your friends stay in the room — there is no host who can kick everyone. The room ends only when its last participant leaves.
+- If Android asks, allow notifications for MicUp so you can see the room status and the End chat button.
+
 ## Speaker, headphones, and Bluetooth
 
 Tap **🔊 Test speaker** on the join screen to hear a short beep through the same route the voice call uses. Tap **🎤 Test mic** to record 2 seconds and play it back — this confirms the mic works (and shows Android's mic-in-use dot) without a second phone.

@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -42,8 +43,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,14 +66,12 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import com.rajatxo.micup.audio.AudioDeviceModuleBuilder
-import com.rajatxo.micup.audio.SignalingClient
-import com.rajatxo.micup.audio.SignalingMessage
-import com.rajatxo.micup.audio.WebRtcClient
+import com.rajatxo.micup.audio.CallParticipant
+import com.rajatxo.micup.audio.CallState
+import com.rajatxo.micup.audio.VoiceService
 import com.rajatxo.micup.data.MicUpPrefs
-import org.webrtc.IceCandidate
-import org.webrtc.PeerConnection
 
-private const val SIGNALING_URL = "wss://micup-signal.chxsexo.workers.dev"
+typealias Participant = CallParticipant
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -116,34 +115,29 @@ private fun HomeScreen(onOpenSettings: () -> Unit) {
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted -> hasMicPermission = granted }
+    val notificationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
     LaunchedEffect(Unit) {
         if (!hasMicPermission) permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-    }
-
-    var playerName by remember { mutableStateOf(prefs.playerName) }
-    var roomCode by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf("Enter a room code to start") }
-    var isConnected by remember { mutableStateOf(false) }
-    var isConnecting by remember { mutableStateOf(false) }
-    var isMuted by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-
-    val myPeerId = remember {
-        (1..8).map { "abcdefghijklmnopqrstuvwxyz0123456789".random() }.joinToString("")
-    }
-
-    val participants = remember { mutableStateOf<List<Participant>>(emptyList()) }
-
-    var signaling by remember { mutableStateOf<SignalingClient?>(null) }
-    var webRtc by remember { mutableStateOf<WebRtcClient?>(null) }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            try { com.rajatxo.micup.audio.VoiceService.stop(appContext) } catch (_: Throwable) {}
-            try { webRtc?.release() } catch (_: Throwable) {}
-            try { signaling?.disconnect() } catch (_: Throwable) {}
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
+        if (CallState.playerName.value.isBlank()) CallState.playerName.value = prefs.playerName
     }
+
+    // The call lives in VoiceService so it survives swiping the app away.
+    val playerName by CallState.playerName.collectAsState()
+    val roomCode by CallState.roomCode.collectAsState()
+    val status by CallState.status.collectAsState()
+    val isConnected by CallState.isConnected.collectAsState()
+    val isConnecting by CallState.isConnecting.collectAsState()
+    val isMuted by CallState.isMuted.collectAsState()
+    val participants by CallState.participants.collectAsState()
+    val errorMessage by CallState.errorMessage.collectAsState()
 
     Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
         Column(
@@ -209,7 +203,7 @@ private fun HomeScreen(onOpenSettings: () -> Unit) {
                     BasicTextField(
                         value = playerName,
                         onValueChange = {
-                            playerName = it.take(20)
+                            CallState.playerName.value = it.take(20)
                             prefs.playerName = it.take(20)
                         },
                         singleLine = true,
@@ -238,7 +232,9 @@ private fun HomeScreen(onOpenSettings: () -> Unit) {
                     }
                     BasicTextField(
                         value = roomCode,
-                        onValueChange = { roomCode = it.take(5).filter { c -> c.isLetterOrDigit() }.uppercase() },
+                        onValueChange = {
+                            CallState.roomCode.value = it.take(5).filter { c -> c.isLetterOrDigit() }.uppercase()
+                        },
                         singleLine = true,
                         cursorBrush = SolidColor(Color(0xFFFF6B6B)),
                         textStyle = TextStyle(color = Color.White, fontSize = 22.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold, letterSpacing = 6.sp),
@@ -257,128 +253,9 @@ private fun HomeScreen(onOpenSettings: () -> Unit) {
                         .clip(RoundedCornerShape(16.dp))
                         .background(if (canConnect) Color(0xFFFF6B6B) else Color(0x33FF6B6B))
                         .clickable(enabled = canConnect) {
-                            isConnecting = true
-                            errorMessage = null
-                            status = "Connecting..."
-                            participants.value = emptyList()
-
-                            val rtc = WebRtcClient(appContext, myPeerId, object : WebRtcClient.Listener {
-                                override fun onPeerIceStateChanged(peerId: String, state: PeerConnection.IceConnectionState) {
-                                    val stateName = state.name
-                                    participants.value = participants.value.map {
-                                        if (it.peerId == peerId) it.copy(iceState = stateName) else it
-                                    }
-                                    val connectedCount = participants.value.count { it.iceState == "CONNECTED" || it.iceState == "COMPLETED" }
-                                    status = when (state) {
-                                        PeerConnection.IceConnectionState.CHECKING -> "Connecting to friend..."
-                                        PeerConnection.IceConnectionState.CONNECTED -> {
-                                            if (connectedCount >= 1) com.rajatxo.micup.audio.VoiceService.start(appContext)
-                                            "✓ Connected"
-                                        }
-                                        PeerConnection.IceConnectionState.COMPLETED -> {
-                                            if (connectedCount >= 1) com.rajatxo.micup.audio.VoiceService.start(appContext)
-                                            "✓ Connected"
-                                        }
-                                        PeerConnection.IceConnectionState.FAILED -> "Connection failed"
-                                        PeerConnection.IceConnectionState.DISCONNECTED -> "Friend disconnected"
-                                        else -> stateName
-                                    }
-                                }
-                                override fun onIceCandidateForPeer(peerId: String, candidate: IceCandidate) {
-                                    signaling?.send(SignalingMessage.Ice(myPeerId, peerId, candidate.sdp, candidate.sdpMid, candidate.sdpMLineIndex))
-                                }
-                                override fun onOfferReadyForPeer(peerId: String, sdp: String) {
-                                    signaling?.send(SignalingMessage.Offer(myPeerId, peerId, sdp))
-                                }
-                                override fun onAnswerReadyForPeer(peerId: String, sdp: String) {
-                                    signaling?.send(SignalingMessage.Answer(myPeerId, peerId, sdp))
-                                }
-                                override fun onPeerError(peerId: String, message: String) {
-                                    errorMessage = message
-                                }
-                            })
-
-                            if (!rtc.init()) {
-                                errorMessage = "WebRTC init failed"
-                                status = "FAILED"
-                                isConnecting = false
-                                return@clickable
-                            }
-                            webRtc = rtc
-
-                            val sig = SignalingClient(SIGNALING_URL, myPeerId, object : SignalingClient.Listener {
-                                override fun onConnected() {
-                                    status = "Waiting for friends..."
-                                    isConnected = true
-                                    isConnecting = false
-                                    signaling?.send(SignalingMessage.Hello(myPeerId, playerName))
-                                }
-                                override fun onMessage(message: SignalingMessage) {
-                                    when (message) {
-                                        is SignalingMessage.Hello -> {
-                                            if (message.from != myPeerId && participants.value.none { it.peerId == message.from }) {
-                                                val name = if (message.name.isNotBlank() && message.name != message.from) message.name else "Friend"
-                                                participants.value = participants.value + Participant(message.from, name)
-                                                val isNew = webRtc?.addPeer(message.from) ?: false
-                                                if (isNew) webRtc?.maybeCreateOffer(message.from)
-                                            }
-                                        }
-                                        is SignalingMessage.Peers -> {
-                                            message.peers.forEach { p ->
-                                                if (p.id != myPeerId && participants.value.none { it.peerId == p.id }) {
-                                                    participants.value = participants.value + Participant(p.id, p.name)
-                                                    val isNew = webRtc?.addPeer(p.id) ?: false
-                                                    if (isNew) webRtc?.maybeCreateOffer(p.id)
-                                                }
-                                            }
-                                        }
-                                        is SignalingMessage.Offer -> {
-                                            if (participants.value.none { it.peerId == message.from }) {
-                                                val name = "Friend"
-                                                participants.value = participants.value + Participant(message.from, name)
-                                                webRtc?.addPeer(message.from)
-                                            }
-                                            webRtc?.handleRemoteOffer(message.from, message.sdp)
-                                        }
-                                        is SignalingMessage.Answer -> {
-                                            webRtc?.handleRemoteAnswer(message.from, message.sdp)
-                                        }
-                                        is SignalingMessage.Ice -> {
-                                            val candidate = IceCandidate(message.sdpMid, message.sdpMLineIndex, message.sdp)
-                                            webRtc?.addIceCandidate(message.from, candidate)
-                                        }
-                                        is SignalingMessage.Bye -> {
-                                            webRtc?.removePeer(message.from)
-                                            participants.value = participants.value.filterNot { it.peerId == message.from }
-                                        }
-                                        is SignalingMessage.Error -> {
-                                            errorMessage = message.message
-                                            status = message.message
-                                            isConnected = false
-                                            isConnecting = false
-                                            signaling?.disconnect()
-                                        }
-                                    }
-                                }
-                                override fun onDisconnected(reason: String) {
-                                    if (participants.value.none { it.iceState == "CONNECTED" || it.iceState == "COMPLETED" }) {
-                                        status = "Disconnected: $reason"
-                                        isConnected = false
-                                        isConnecting = false
-                                    }
-                                }
-                                override fun onError(error: String) {
-                                    errorMessage = error
-                                    status = "FAILED"
-                                    isConnecting = false
-                                    if (error.contains("Room is full", ignoreCase = true)) {
-                                        isConnected = false
-                                        participants.value = emptyList()
-                                    }
-                                }
-                            })
-                            sig.connect(roomCode, myPeerId)
-                            signaling = sig
+                            // The service owns the call from here on, so the
+                            // room survives the app being swiped away.
+                            VoiceService.join(appContext, roomCode, playerName)
                         },
                     contentAlignment = Alignment.Center
                 ) {
@@ -445,7 +322,7 @@ private fun HomeScreen(onOpenSettings: () -> Unit) {
                 Text(status, color = Color(0xFF4ADE80), fontSize = 16.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(20.dp))
 
-                Text("FRIENDS (${participants.value.size + 1})", color = Color(0xFF888888), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.fillMaxWidth())
+                Text("FRIENDS (${participants.size + 1})", color = Color(0xFF888888), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(8.dp))
 
                 LazyColumn(
@@ -453,7 +330,7 @@ private fun HomeScreen(onOpenSettings: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     item { ParticipantRow(playerName.ifBlank { "You" }, "connected", true) }
-                    items(participants.value) { p ->
+                    items(participants) { p ->
                         ParticipantRow(p.name, p.iceState, false)
                     }
                 }
@@ -471,8 +348,9 @@ private fun HomeScreen(onOpenSettings: () -> Unit) {
                                 .clip(CircleShape)
                                 .background(if (isMuted) Color(0x22FF5252) else Color(0xFFFF6B6B))
                                 .clickable {
-                                    isMuted = !isMuted
-                                    webRtc?.setMuted(isMuted)
+                                    val next = !isMuted
+                                    CallState.isMuted.value = next
+                                    VoiceService.setMuted(appContext, next)
                                 },
                             contentAlignment = Alignment.Center
                         ) {
@@ -489,16 +367,8 @@ private fun HomeScreen(onOpenSettings: () -> Unit) {
                                 .clip(CircleShape)
                                 .background(Color(0x22FF5252))
                                 .clickable {
-                                    com.rajatxo.micup.audio.VoiceService.stop(appContext)
-                                    webRtc?.release()
-                                    signaling?.disconnect()
-                                    webRtc = null
-                                    signaling = null
-                                    isConnected = false
-                                    isConnecting = false
-                                    participants.value = emptyList()
-                                    status = "Enter a room code to start"
-                                    isMuted = false
+                                    // Drops only this device; friends stay in the room.
+                                    VoiceService.end(appContext)
                                 },
                             contentAlignment = Alignment.Center
                         ) {
@@ -625,12 +495,6 @@ private fun SettingsScreen(onBack: () -> Unit) {
 }
 
 // ==================== SHARED COMPONENTS ====================
-
-data class Participant(
-    val peerId: String,
-    val name: String,
-    val iceState: String = "new"
-)
 
 @Composable
 private fun ParticipantRow(name: String, iceState: String, isSelf: Boolean) {
