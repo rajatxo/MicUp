@@ -120,7 +120,16 @@ public final class AudioDeviceModuleBuilder {
             am.setMode(AudioManager.MODE_NORMAL);
 
             // Let Bluetooth/wired headsets win if the user has one connected.
-            if (hasHeadset(am)) return;
+            // shortcut: a headset plugged in mid-call is picked up on the next
+            // forceSpeaker() call (ICE/track start), not instantly.
+            if (hasHeadset(am)) {
+                // Drop any speaker preference so the system can route to the headset.
+                AudioTrack track = extractAudioTrack(adm);
+                if (track != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    track.setPreferredDevice(null);
+                }
+                return;
+            }
             am.setSpeakerphoneOn(true);
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
 
