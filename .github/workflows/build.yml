@@ -87,6 +87,7 @@ jobs:
           --title "MicUp ${VERSION_NAME}" \
           --notes "## MicUp ${VERSION_NAME}
 
+        - Fixed: notification now disappears immediately when you tap End chat
         - Room now stays alive when you close the app or remove it from the task manager
         - Persistent notification shows the room is active, with an End chat button
         - Ending your call no longer kicks friends out of the room

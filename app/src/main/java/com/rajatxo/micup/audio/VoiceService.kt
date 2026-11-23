@@ -39,6 +39,11 @@ class VoiceService : Service() {
     private var myPeerId: String = ""
     private var displayName: String = ""
 
+    // Set while tearing down so late WebRTC/WebSocket callbacks cannot
+    // re-post the notification after it has been removed.
+    @Volatile
+    private var ending = false
+
     companion object {
         private const val TAG = "MicUp/VoiceService"
         const val NOTIF_ID = 4201
@@ -114,6 +119,7 @@ class VoiceService : Service() {
     /** Default onTaskRemoved: do nothing. The service and the call survive. */
 
     private fun startCall(room: String, name: String) {
+        ending = false
         myPeerId = (1..8).map { "abcdefghijklmnopqrstuvwxyz0123456789".random() }.joinToString("")
         displayName = name.ifBlank { "Friend" }
         CallState.roomCode.value = room
@@ -257,12 +263,17 @@ class VoiceService : Service() {
 
     /** End only this device's participation; everyone else stays in the room. */
     private fun endCall() {
+        ending = true
         try { signaling?.disconnect() } catch (_: Throwable) {}
         signaling = null
         try { webRtc?.release() } catch (_: Throwable) {}
         webRtc = null
         CallState.reset()
         try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (_: Throwable) {}
+        try {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            nm?.cancel(NOTIF_ID)
+        } catch (_: Throwable) {}
         stopSelf()
     }
 
@@ -280,6 +291,9 @@ class VoiceService : Service() {
     }
 
     private fun updateNotification() {
+        // A callback can still be in flight after End chat (socket close,
+        // peer dispose). Don't let it resurrect the notification.
+        if (ending || webRtc == null) return
         try {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
             nm?.notify(NOTIF_ID, buildNotification())
