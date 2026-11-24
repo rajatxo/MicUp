@@ -83,7 +83,12 @@ class WebRtcClient(
                 .setAudioDeviceModule(adm!!)
                 .createPeerConnectionFactory()
 
-            audioSource = factory!!.createAudioSource(MediaConstraints())
+            audioSource = factory!!.createAudioSource(MediaConstraints().apply {
+                // Software processing is the only path with the MIC source: force it all on.
+                listOf("googEchoCancellation", "googEchoCancellation2", "googNoiseSuppression",
+                    "googNoiseSuppression2", "googHighpassFilter", "googAutoGainControl")
+                    .forEach { mandatory.add(MediaConstraints.KeyValuePair(it, "true")) }
+            })
             audioTrack = factory!!.createAudioTrack("ARDAMS", audioSource)
             audioTrack!!.setEnabled(true)
 
@@ -181,10 +186,10 @@ class WebRtcClient(
         Log.i(TAG, "[$remotePeerId] Creating offer (we are caller)")
         entry.connection.createOffer(object : SdpObserver {
             override fun onCreateSuccess(sdp: SessionDescription?) {
-                val desc = sdp ?: run {
+                val desc = (sdp ?: run {
                     entry.makingOffer = false
                     return
-                }
+                }).let { SessionDescription(it.type, tuneOpus(it.description)) }
                 entry.connection.setLocalDescription(object : SdpObserver {
                     override fun onSetSuccess() {
                         // Only send once the local description is actually set.
@@ -237,7 +242,8 @@ class WebRtcClient(
                     // Create answer
                     entry.connection.createAnswer(object : SdpObserver {
                         override fun onCreateSuccess(sdp: SessionDescription?) {
-                            val desc = sdp ?: return
+                            val desc = SessionDescription(
+                                (sdp ?: return).type, tuneOpus(sdp.description))
                             entry.connection.setLocalDescription(object : SdpObserver {
                                 override fun onSetSuccess() {
                                     Log.i(TAG, "[$remotePeerId] Local answer set")
@@ -398,5 +404,15 @@ class WebRtcClient(
 
     companion object {
         private const val TAG = "MicUp/WebRtc"
+
+        /** Mono wideband voice at 64 kbps with FEC: clean speech, survives packet loss. */
+        private fun tuneOpus(sdp: String): String {
+            val pt = Regex("a=rtpmap:(\\d+) opus/48000").find(sdp)?.groupValues?.get(1) ?: return sdp
+            val params = "minptime=10;useinbandfec=1;usedtx=0;stereo=0;sprop-stereo=0;" +
+                "maxaveragebitrate=64000;maxplaybackrate=48000"
+            return sdp.lines().joinToString("\r\n") { l ->
+                if (l.startsWith("a=fmtp:$pt ")) "a=fmtp:$pt $params" else l
+            }
+        }
     }
 }
